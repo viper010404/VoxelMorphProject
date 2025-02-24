@@ -153,24 +153,106 @@ class SpatialTransformer(nn.Module):
         return warped_grid
 
 
-class VecInt(nn.Module):
+class IntegrateVelocityField(nn.Module):
     """
-    Integrates a vector field via scaling and squaring.
+    Integrates a velocity field over multiple steps using the scaling and squaring method.
+
+    This module ensures that transformations caused by a velocity field is diffeomorphic by
+    compounding small, intermediate transformations (by recursive scaling and squaring). This
+    ensures the resultant is both smooth and invertable.
+
+    Attributes
+    ----------
+    steps : int
+        The number of squaring steps used for integration.
+    scale : float
+        Scaling factor for the initial velocity field, determined as `1 / (2^steps)`.
+    transformer : nn.Module
+        A spatial transformer module used to iteratively warp the vector field.
+
+    Examples
+    -------
+    ### Integrate a 2D velocity field over multiple steps:
+    >>> shape = (128, 128)  # 2D spatial grid
+    >>> integrator = IntegrateVelocityField(shape, steps=256)
+    >>> velocity_field = torch.randn(1, 2, 128, 128)  # (B, C, H, W)
+    >>> displacement_field = integrator(velocity_field)
+    >>> displacement_field.shape
+    torch.Size([1, 2, 128, 128])
+
+    ### Perform integration on a 3D velocity field with a single scaling step:
+    >>> shape = (64, 64, 64)  # 3D spatial grid
+    >>> integrator = IntegrateVelocityField(shape, steps=1)
+    >>> velocity_field = torch.randn(1, 3, 64, 64, 64)  # (B, C, D, H, W)
+    >>> displacement_field = integrator(velocity_field)
+    >>> displacement_field.shape
+    torch.Size([1, 3, 64, 64, 64])
     """
 
-    def __init__(self, inshape, nsteps):
+    def __init__(
+        self, shape: tuple,
+        steps: int = 1,
+        interpolation_mode: str = "bilinear",
+        align_corners: bool = False,
+        device: str = "cpu"
+    ):
+        """
+        Initialize `IntegrateVelocityField`
+
+        Parameters
+        ----------
+        shape : tuple
+            Shape of the input velocity field (excluding batch and channel dimensions).
+        steps : int, optional
+            Number of integration steps. A higher value leads to a more smooth and accurate
+            integration at the cost of higher/longer computation. Default is 1.
+        interpolation_mode : str
+            Algorithm used for interpolating the warped image. Default is  'bilinear'. Options are:
+            'bilinear' | 'nearest' | 'bicubic'.
+        align_corners : bool
+            Map the corner points of the moving image to the corner points of the warped image.
+        device : str
+            Device to construct and hold the identity grid.
+        """
+
         super().__init__()
 
-        assert nsteps >= 0, 'nsteps should be >= 0, found: %d' % nsteps
-        self.nsteps = nsteps
-        self.scale = 1.0 / (2 ** self.nsteps)
-        self.transformer = SpatialTransformer(inshape)
+        if steps < 0:
+            raise ValueError(f"steps should be >= 0, found: {steps}")
 
-    def forward(self, vec):
-        vec = vec * self.scale
-        for _ in range(self.nsteps):
-            vec = vec + self.transformer(vec, vec)
-        return vec
+        self.steps = steps
+        self.scale = 1.0 / (2 ** self.steps)  # Initial downscaling factor
+
+        # Make the transformer which will perform the warping operation
+        self.transformer = SpatialTransformer(shape, interpolation_mode, align_corners, device)
+
+    def forward(self, velocity_field: torch.Tensor) -> torch.Tensor:
+        """
+        Integrates the input velocity field using scaling and squaring.
+
+        Parameters
+        ----------
+        vector_field : torch.Tensor
+            A velocity field of shape (B, C, *spatial_dims), where B is batch size,
+            C is the number of vector components (typically spatial dimensions),
+            and `spatial_dims` represent the grid dimensions.
+
+        Returns
+        -------
+        torch.Tensor
+            The integrated displacement field with the same shape as the input.
+        """
+
+        # Apply initial scaling to the velocity field
+        velocity_field = velocity_field * self.scale
+
+        # Integration loop
+        for _ in range(self.steps):
+
+            # Recursive integration step
+            velocity_field = velocity_field + self.transformer(velocity_field, velocity_field)
+
+        return velocity_field
 
 
 class ResizeTransform(nn.Module):
