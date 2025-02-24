@@ -1,154 +1,353 @@
 __all__ = [
-    "VxmDense",
+    "VxmDeformable",
 ]
 
-import numpy as np
+from typing import List, Union, Callable, Tuple
+
 import torch
 import torch.nn as nn
-from torch.distributions.normal import Normal
+import neurite as ne
 
-from .. import default_unet_features
+# TODO: Change this to `import voxelmorph as vm` or something
 from . import layers
-from .modelio import LoadableModel, store_config_args
 
-class VxmDense(LoadableModel):
+
+class VxmDeformable(ne.BasicUNet):
     """
-    VoxelMorph network for (unsupervised) nonlinear registration between two images.
+    A network archetecture built on `BasicUNet` to perform nD image registration using a flow
+    field.
+
+    Parameters
+    ----------
+    ndim : int
+        Number of spatial dimensions (e.g., 2 for 2D, 3 for 3D).
+    in_channels : int
+        Number of input channels in the source and target images.
+    out_channels : int
+        Number of output channels in the flow field.
+    *args : list
+        Additional positional arguments for the `BasicUNet` constructor.
+    nb_features : List[int], optional
+        List of integers specifying the number of features in each
+        level of the UNet architecture. Default is `[16, 16, 16, 16, 16]`.
+    norms : Union[List[str], str], optional
+        Normalization layers for the UNet. Can be a list of normalization
+        types or a single normalization type. Default is `None`.
+    activations : Union[List[str], str], optional
+        Activation functions for the UNet layers. Can be a list of
+        activation functions or a single function. Default is `nn.ReLU`.
+    order : str, optional
+        The order of operations in each UNet block. Default is `'ncaca'`.
+    final_activation : Union[str, nn.Module, None], optional
+        The activation applied to the final output of the network. Default is `None`.
+    flow_initializer : ne.random.Sampler, optional
+        A custom sampler for initializing the weights of the flow layer.
+        If not provided, it defaults to a normal distribution
+        with mean 0 and standard deviation `1e-5`.
+    integration_steps : int, optional
+        Number of steps to take in integrating the flow field. Default is 1.
+    **kwargs : dict
+        Additional keyword arguments passed to the `BasicUNet` constructor.
+
+    Attributes
+    ----------
+    flow_layer : nn.Module
+        A custom convolutional block used to generate the flow field
+        from the combined source and target features.
+
+    Methods
+    -------
+    forward(source, target)
+        Combines source and target images, processes them through the
+        UNet and the flow layer, and returns the resulting flow field.
     """
 
-    @store_config_args
-    def __init__(self,
-                 inshape,
-                 nb_unet_features=None,
-                 nb_unet_levels=None,
-                 unet_feat_mult=1,
-                 nb_unet_conv_per_level=1,
-                 int_steps=7,
-                 int_downsize=2,
-                 bidir=False,
-                 use_probs=False,
-                 src_feats=1,
-                 trg_feats=1,
-                 unet_half_res=False):
-        """ 
-        Parameters:
-            inshape: Input shape. e.g. (192, 192, 192)
-            nb_unet_features: Unet convolutional features. Can be specified via a list of lists with
-                the form [[encoder feats], [decoder feats]], or as a single integer. 
-                If None (default), the unet features are defined by the default config described in 
-                the unet class documentation.
-            nb_unet_levels: Number of levels in unet. Only used when nb_features is an integer. 
-                Default is None.
-            unet_feat_mult: Per-level feature multiplier. Only used when nb_features is an integer. 
-                Default is 1.
-            nb_unet_conv_per_level: Number of convolutions per unet level. Default is 1.
-            int_steps: Number of flow integration steps. The warp is non-diffeomorphic when this 
-                value is 0.
-            int_downsize: Integer specifying the flow downsample factor for vector integration. 
-                The flow field is not downsampled when this value is 1.
-            bidir: Enable bidirectional cost function. Default is False.
-            use_probs: Use probabilities in flow field. Default is False.
-            src_feats: Number of source image features. Default is 1.
-            trg_feats: Number of target image features. Default is 1.
-            unet_half_res: Skip the last unet decoder upsampling. Requires that int_downsize=2. 
-                Default is False.
+    def __init__(
+        self,
+        ndim: int,
+        in_channels: int,
+        out_channels: int,
+        nb_features: List[int] = (16, 16, 16, 16, 16),
+        norms: Union[List[Union[Callable, str]], Callable, str, None] = None,
+        activations: Union[List[Union[Callable, str]], Callable, str, None] = nn.ReLU,
+        order: str = 'caca',
+        final_activation: Union[str, nn.Module, None] = None,
+        flow_initializer: Union[float, ne.samplers.Sampler] = ne.samplers.Normal(0, 1e-5),
+        bidirectional_cost: bool = False,
+        integration_steps: int = 0,
+        resize_integrated_fields: bool = False,
+        device: str = "cpu",
+    ):
+
         """
-        super().__init__()
+        Initialize the `VxmDeformable`.
 
-        # internal flag indicating whether to return flow or integrated warp during inference
-        self.training = True
+        Parameters
+        ----------
+        ndim : int
+            Dimensionality of the input (1, 2, or 3).
+        in_channels : int
+            Number of input channels.
+        out_channels : int
+            Number of output channels.
+        expected_moving_shape : tuple[int]
+            The expected shape of the `moving_tensor` input to the forward method of this class.
+            without batch or channel dimensions. Used to initialize the `VecInt` integrator.
+        nb_features : List[int]
+            Number of features at each level of the unet. Must be a list of
+            positive integers.
+        norms : Union[List[str], str, None], optional
+            Normalization layers to use in each block. Can be a string or a list
+            of strings specifying norms for each layer, or `None` for no norm.
+        activations : Union[List[str], str, Callable], optional
+            Activation functions to use in each block. Can be a callable,
+            a string, or a list of strings/callables.
+        order : str, optional
+            The order of operations in each convolutional block. Default is 'cna'
+            (normalization -> convolution -> activation). Each character in the string represents
+            one of the following:
+            - `'c'`: Convolution
+            - `'n'`: Normalization
+            - `'a'`: Activation
+        bidirectional_cost : bool, optional
+            Enable calculation of the cost-function bidirectionally. Default is False
+        integration_steps : int, optional
+            Number of scaling and squaring steps for integrating the flow field.
+            Default is 0 (no integration).
+        device : str, optional
+            Device identifier (e.g., 'cpu' or 'cuda') to place/run the model on.
+        """
 
-        # ensure correct dimensionality
-        ndims = len(inshape)
-        assert ndims in [1, 2, 3], 'ndims should be one of 1, 2, or 3. found: %d' % ndims
-
-        # configure core unet model
-        self.unet_model = Unet(
-            inshape,
-            infeats=(src_feats + trg_feats),
-            nb_features=nb_unet_features,
-            nb_levels=nb_unet_levels,
-            feat_mult=unet_feat_mult,
-            nb_conv_per_level=nb_unet_conv_per_level,
-            half_res=unet_half_res,
+        super().__init__(
+            ndim=ndim, in_channels=in_channels, out_channels=out_channels, nb_features=nb_features,
+            norms=norms, activations=activations, order=order, final_activation=final_activation
         )
 
-        # configure unet to flow field layer
-        Conv = getattr(nn, 'Conv%dd' % ndims)
-        self.flow = Conv(self.unet_model.final_nf, ndims, kernel_size=3, padding=1)
+        # Configure bidirectional cost/training
+        self.integration_steps = integration_steps
+        self.bidirectional_cost = bidirectional_cost
+        self.resize_integrated_fields = resize_integrated_fields
+        self.device = device
 
-        # init flow layer with small weights and bias
-        self.flow.weight = nn.Parameter(Normal(0, 1e-5).sample(self.flow.weight.shape))
-        self.flow.bias = nn.Parameter(torch.zeros(self.flow.bias.shape))
+        self._init_flow_layer(ndim, out_channels, flow_initializer)
 
-        # probabilities are not supported in pytorch
-        if use_probs:
-            raise NotImplementedError(
-                'Flow variance has not been implemented in pytorch - set use_probs to False')
+    def forward(
+        self,
+        source: torch.Tensor,
+        target: torch.Tensor,
+        register: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Forward pass of `VxmDeformable`.
 
-        # configure optional resize layers (downsize)
-        if not unet_half_res and int_steps > 0 and int_downsize > 1:
-            self.resize = layers.ResizeTransform(int_downsize, ndims)
+        The forward pass concatenates the `source` and `target` images, passes them through the
+        `BasicUNet` backbone, applies a flow layer to obtain the flow (velocity) field, then warps
+        the images according to the `register` argument.
+
+        Parameters
+        ----------
+        source : torch.Tensor
+            2D or 3D Source image tensor with batch and channel dimensions to be registered/warped
+            to the target image.
+        target : torch.Tensor
+            Image to which `source` is registered/warped. Same shape as `source`.
+        register : bool, optional
+            If `True`, returns the registered source image along with the predicted positive flow
+            field.
+
+        Returns
+        -------
+        torch.Tensor or Tuple[torch.Tensor, torch.Tensor]
+            - If `register=True`, returns a tuple of
+                - `warped_source`
+                - `pos_flow`
+            - If `register=False` and `bidirectional_cost=False`, returns a tuple of:
+                - `warped_source`
+                - `preintegrated_flow`
+            - If `register=False` and `bidirectional_cost=True`, returns a tuple of:
+                - `warped_source`
+                - `preintegrated_flow`
+                - `warped_target`
+        """
+
+        if not hasattr(self, 'flow_layer'):
+            raise RuntimeError(
+                "The `flow_layer` is not initialized. Ensure a valid `flow_initializer` "
+                "is passed during initialization or load a trained model from a checkpoint."
+            )
+
+        # Concat the source and target along channel dimension
+        combined_features = torch.cat([source, target], dim=1)
+
+        # Pass combined features through the `BasicUNet` backbone
+        combined_features = super().forward(combined_features)
+
+        # Apply flow layer to get the positive flow field `pos_flow`
+        pos_flow = self.flow_layer(combined_features)
+
+        # Keep a copy of the flow before it's integrated
+        preintegrated_flow = torch.clone(pos_flow)
+
+        # For bidirectional cost mode, prepare negative flow (target->source)
+        neg_flow = -pos_flow if self.bidirectional_cost else None
+
+        # Optionally integrate
+        if self.integration_steps > 0:
+            pos_flow, neg_flow = self._integrate_velocity_fields(pos_flow, neg_flow)
+
+        # Perform the warping operations for the source and target
+        warped_source = self._spatial_transform(source, pos_flow)
+
+        # Warp the target image using the negative flow if needed
+        warped_target = self._spatial_transform(
+            target, neg_flow
+        ) if self.bidirectional_cost else None
+
+        # Prepare the output based on the 'register' flag and cost mode
+        output_list = [warped_source]
+
+        if register:
+            # output_list: [warped_source, pos_flow]
+            output_list.append(pos_flow)
         else:
-            self.resize = None
+            # output_list: [warped_source, preintegrated_flow]
+            output_list.append(preintegrated_flow)
+            if self.bidirectional_cost:
+                # output_list: [warped_source, preintegrated_flow, warped_target]
+                output_list.append(warped_target)
 
-        # resize to full res
-        if int_steps > 0 and int_downsize > 1:
-            self.fullsize = layers.ResizeTransform(1 / int_downsize, ndims)
-        else:
-            self.fullsize = None
+        return output_list
 
-        # configure bidirectional training
-        self.bidir = bidir
+    def _init_flow_layer(
+        self,
+        ndim: int,
+        features: int,
+        flow_initializer: Union[float, ne.samplers.Sampler] = ne.samplers.Normal(0, 1e-5)
+    ):
 
-        # configure optional integration layer for diffeomorphic warp
-        down_shape = [int(dim / int_downsize) for dim in inshape]
-        self.integrate = layers.VecInt(down_shape, int_steps) if int_steps > 0 else None
+        """
+        Initialize the flow layer with custom weight initialization (by sampling
+        `flow_initializer`).
 
-        # configure transformer
-        self.transformer = layers.SpatialTransformer(inshape)
+        This layer is a convolutional block that produces a displacement (flow)
+        field. The weights of its initial convolution are sampled using the
+        provided flow_initializer, and biases are set to zero.
 
-    def forward(self, source, target, registration=False):
-        '''
-        Parameters:
-            source: Source image tensor.
-            target: Target image tensor.
-            registration: Return transformed image and flow. Default is False.
-        '''
+        Parameters
+        ----------
+        ndim : int
+            **Spatial** dimensionality of the input (1, 2, or 3).
+        features : int
+            Number of input and output features for the flow layer.
+        flow_initializer :  Union[float, ne.random.Sampler], optional
+            Sampler for initializing the *weights* of the flow layer. Default is
+            `ne.random.Normal(0, 1e-5)`.
+        """
 
-        # concatenate inputs and propagate unet
-        x = torch.cat([source, target], dim=1)
-        x = self.unet_model(x)
+        # Initialize the conv ("flow") layer with congruent in and out features
+        flow_layer = ne.modules.ConvBlock(ndim, features, features).to(self.device)
 
-        # transform into flow field
-        flow_field = self.flow(x)
+        # Optionally, apply custom initialization if `flow_initializer`` is provided
+        if flow_initializer is not None:
 
-        # resize flow for integration
-        pos_flow = flow_field
-        if self.resize:
-            pos_flow = self.resize(pos_flow)
+            # Make the distribution to sample the flow parameters
+            flow_initializer = ne.samplers.Fixed.make(flow_initializer)
 
-        preint_flow = pos_flow
+            # Sample the weight parameters from the distribution for first (and only) conv
+            flow_layer.conv0.weight = nn.Parameter(
+                flow_initializer(flow_layer.conv0.weight.shape)
+            ).to(self.device)
 
-        # negate flow for bidirectional model
-        neg_flow = -pos_flow if self.bidir else None
+            # Set the bias term(s) to zero for the first (and only) conv
+            flow_layer.conv0.bias = nn.Parameter(
+                torch.zeros(flow_layer.conv0.bias.shape)
+            ).to(self.device)
 
-        # integrate to produce diffeomorphic warp
-        if self.integrate:
-            pos_flow = self.integrate(pos_flow)
-            neg_flow = self.integrate(neg_flow) if self.bidir else None
+        # Register the flow layer as a submodule
+        self.add_module("flow_layer", flow_layer)
 
-            # resize to final resolution
-            if self.fullsize:
-                pos_flow = self.fullsize(pos_flow)
-                neg_flow = self.fullsize(neg_flow) if self.bidir else None
+    def _integrate_velocity_fields(
+        self,
+        pos_flow: torch.Tensor,
+        neg_flow: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Integrate the velocity fields to obtain diffeomorphic warp (displacement) fields.
 
-        # warp image with flow field
-        y_source = self.transformer(source, pos_flow)
-        y_target = self.transformer(target, neg_flow) if self.bidir else None
+        Derive a smooth and invertable displacement field by integrating a velocity field via the
+        scaling and squaring method. If no `IntegrateVelocityField` object exists in the model's
+        state dictionary, instantiate it with the correct size of the input and insert it. This will
+        only happen once upon initial call of this method.
 
-        # return non-integrated flow field if training
-        if not registration:
-            return (y_source, y_target, preint_flow) if self.bidir else (y_source, preint_flow)
-        else:
-            return y_source, pos_flow
+        Parameters
+        ----------
+        pos_flow : torch.Tensor
+            Positive flow (velocity) field (source -> target).
+        neg_flow : torch.Tensor
+            Negative flow (velocity) field (target -> source).
+
+        Returns
+        -------
+        torch.Tensor
+            Displacement field obtained by integrating the velocity field via scaling and squaring.
+        """
+
+        # If the velocity integrator is not defined, dynamically construct it
+        if not hasattr(self, "velocity_field_integrator"):
+
+            # Dynamically construct the integrator based on the spatial shape
+            velocity_field_integrator = layers.IntegrateVelocityField(
+                shape=pos_flow.shape[2:], steps=self.integration_steps, device=self.device
+            )
+
+            # Add it to the module
+            self.add_module("velocity_field_integrator", velocity_field_integrator)
+
+        # Integrate the positive flow
+        pos_flow = self.velocity_field_integrator(pos_flow)
+
+        # Integrate the negative velocity field if bidirectional cost is enabled
+        neg_flow = self.velocity_field_integrator(neg_flow) if self.bidirectional_cost else None
+
+        return pos_flow, neg_flow
+
+    def _spatial_transform(
+        self,
+        moving_image: torch.Tensor,
+        deformation_field: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Warp an image tensor using a deformation/displacement field.
+
+        This method applies a spatial transformation to the provided image tensor based on the
+        deformation field using a SpatialTransformer. If no `IntegrateVelocityField` object exists
+        in the model's state dictionary, instantiate one with the correct size of the input and
+        register it as a submodule. This will only happen once upon the initial call of this method.
+
+        Parameters
+        ----------
+        moving_image : torch.Tensor
+            Image tensor to be warped, with shape (B, C, ...).
+        deformation_field : torch.Tensor
+            Displacement field used for warping, with shape matching the spatial dimensions of
+            `moving_image`.
+
+        Returns
+        -------
+        torch.Tensor
+            The warped image tensor.
+        """
+
+        if not hasattr(self, "spatial_transformer"):
+            # Dynamically construct the spatial transformer with the correct spatial shape
+            spatial_transformer = layers.SpatialTransformer(
+                size=moving_image.shape[2:], device=self.device
+            )
+
+            # Register it as a submodule
+            self.add_module("spatial_transformer", spatial_transformer)
+
+        # Warp the moving image with the deformation field
+        warped_image = self.spatial_transformer(moving_image, deformation_field)
+
+        return warped_image
