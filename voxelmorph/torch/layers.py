@@ -316,7 +316,7 @@ class ResizeDisplacementField(nn.Module):
         # Sample from the scaling sampler. If type Fixed, just get the fixed value!
         scale_factor = self.scale_factor()
 
-        resized_displacement_field = F.interpolate(
+        resized_displacement_field = nnf.interpolate(
             displacement_field * scale_factor,  # Scale the magnitudes of the displacement field
             scale_factor=scale_factor,
             mode=self.interpolation_mode,
