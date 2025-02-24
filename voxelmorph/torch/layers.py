@@ -1,10 +1,10 @@
 __all__ = [
     "SpatialTransformer",
-    "VecInt",
-    "ResizeTransform",
+    "IntegrateVelocityField",
+    "ResizeDisplacementField",
 ]
 
-from typing import Tuple, Union
+from typing import Tuple, Union, Optional
 
 import torch
 import torch.nn as nn
@@ -255,30 +255,72 @@ class IntegrateVelocityField(nn.Module):
         return velocity_field
 
 
-class ResizeTransform(nn.Module):
+class ResizeDisplacementField(nn.Module):
     """
-    Resize a transform, which involves resizing the vector field *and* rescaling it.
+    Resize and rescale a displacement field.
+
+    Resizd a displacement field both spatially (via interpolation) and in magnitude (via scaling).
+
+    Examples
+    -------
+    ### Resize a 2D displacement field
+    >>> resize_field = ResizeDisplacementField(scale_factor=2.0, interpolation_mode="bilinear")
+    >>> displacement_field = torch.rand(1, 2, 16, 16)  # Example displacement field in 2d
+    >>> resized_displacement_field = resize_field(displacement_field)
+    >>> print(resized_displacement_field.shape)  # Should be larger if scale_factor > 1
+    torch.Size([1, 2, 32, 32])
     """
 
-    def __init__(self, vel_resize, ndims):
+    def __init__(
+        self,
+        scale_factor: Optional[Union[float, int, ne.samplers.Sampler]] = 1.0,
+        interpolation_mode: str = "bilinear",
+        align_corners: bool = True,
+    ):
+        """
+        Instantiate the `ResizeDisplacementField` module.
+
+        Parameters
+        ----------
+        scale_factor : Optional[Union[float, int, Sampler]], optional
+            Factor by which to stretch or shrink the spatial dimensions of the displacement field.
+            Values of `scale_factor` > 1 stretch/expand the field, and values < 1 shrink it. By
+            default None.
+        interpolation_mode : str
+            Algorithm used for interpolating the warped image. Default is  'bilinear'. Options are:
+            'bilinear' | 'nearest' | 'bicubic', 'trilinear'.
+        align_corners : bool
+            Map the corner points of the moving image to the corner points of the warped image.
+        """
         super().__init__()
-        self.factor = 1.0 / vel_resize
-        self.mode = 'linear'
-        if ndims == 2:
-            self.mode = 'bi' + self.mode
-        elif ndims == 3:
-            self.mode = 'tri' + self.mode
+        self.interpolation_mode = interpolation_mode
+        self.align_corners = align_corners
+        self.scale_factor = ne.samplers.Fixed.make(scale_factor)
 
-    def forward(self, x):
-        if self.factor < 1:
-            # resize first to save memory
-            x = nnf.interpolate(x, align_corners=True, scale_factor=self.factor, mode=self.mode)
-            x = self.factor * x
+    def forward(self, displacement_field: torch.Tensor) -> torch.Tensor:
+        """
+        Instantiate the `ResizeDisplacementField` object.
 
-        elif self.factor > 1:
-            # multiply first to save memory
-            x = self.factor * x
-            x = nnf.interpolate(x, align_corners=True, scale_factor=self.factor, mode=self.mode)
+        Parameters
+        ----------
+        displacement_field : torch.Tensor
+            Vector field of shape (B, C, H, W) representing a displacement field, where C represents
+            each spatial component of the vector field.
 
-        # don't do anything if resize is 1
-        return x
+        Returns
+        -------
+        torch.Tensor
+            Resized displacement field.
+        """
+
+        # Sample from the scaling sampler. If type Fixed, just get the fixed value!
+        scale_factor = self.scale_factor()
+
+        resized_displacement_field = F.interpolate(
+            displacement_field * scale_factor,  # Scale the magnitudes of the displacement field
+            scale_factor=scale_factor,
+            mode=self.interpolation_mode,
+            align_corners=self.align_corners,
+        )
+
+        return resized_displacement_field
