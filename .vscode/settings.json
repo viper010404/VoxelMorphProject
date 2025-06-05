@@ -1,0 +1,7 @@
+{
+    "editor.rulers": [99],
+    "python.languageServer": "Pylance",
+    "python.analysis.autoSearchPaths": true,
+    "python.analysis.useLibraryCodeForTypes": true,
+    "flake8.args": ["--max-line-length=100"],
+}
