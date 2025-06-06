@@ -29,7 +29,10 @@ except ImportError:
 
 os.environ['NEURITE_BACKEND'] = 'pytorch'
 
-from . import torch
-from .torch import layers
-from .torch import networks
-from .torch import losses
+from . import py
+from . import generators
+from . import layers
+from . import losses
+from . import modelio
+from . import networks
+from . import utils
