@@ -22,11 +22,6 @@ from . import generators
 from . import py
 from .py.utils import default_unet_features
 
-try:
-    import torch
-except ImportError:
-    raise ImportError('Please install pytorch to use this voxelmorph backend')
-
 os.environ['NEURITE_BACKEND'] = 'pytorch'
 
 from . import py
