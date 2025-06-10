@@ -22,8 +22,6 @@ from . import generators
 from . import py
 from .py.utils import default_unet_features
 
-os.environ['NEURITE_BACKEND'] = 'pytorch'
-
 from . import py
 from . import generators
 from . import layers
