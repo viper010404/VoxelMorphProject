@@ -21,6 +21,5 @@ from . import py
 from . import generators
 from . import layers
 from . import losses
-from . import modelio
 from . import networks
 from . import utils
