@@ -12,7 +12,7 @@ import neurite as ne
 from . import layers
 
 
-class VxmDeformable(ne.models.BasicUNet):
+class VxmDeformable(nn.Module):
     """
     A network archetecture built on `BasicUNet` to perform nD image registration using a flow
     field.
@@ -118,18 +118,22 @@ class VxmDeformable(ne.models.BasicUNet):
             Device identifier (e.g., 'cpu' or 'cuda') to place/run the model on.
         """
 
-        super().__init__(
-            ndim=ndim, in_channels=in_channels, out_channels=out_channels, nb_features=nb_features,
-            normalizations=normalizations, activations=activations, order=order, final_activation=final_activation
-        )
+        # Initialize the Module
+        super().__init__()
 
-        # Configure bidirectional cost/training
+        # Set cnnstant attrs
         self.integration_steps = integration_steps
         self.bidirectional_cost = bidirectional_cost
         self.resize_integrated_fields = resize_integrated_fields
         self.device = device
 
+        # Set derived attrs
         self._init_flow_layer(ndim, out_channels, flow_initializer)
+        self.model = ne.models.BasicUNet(
+            ndim=ndim, in_channels=in_channels, out_channels=out_channels, nb_features=nb_features,
+            normalizations=normalizations, activations=activations, order=order,
+            final_activation=final_activation
+        )
 
     def forward(
         self,
@@ -179,8 +183,8 @@ class VxmDeformable(ne.models.BasicUNet):
         # Concat the source and target along channel dimension
         combined_features = torch.cat([source, target], dim=1)
 
-        # Pass combined features through the `BasicUNet` backbone
-        combined_features = super().forward(combined_features)
+        # Pass combined features through the model's backbone
+        combined_features = self.model(combined_features)
 
         # Apply flow layer to get the positive flow field `pos_flow`
         pos_flow = self.flow_layer(combined_features)
@@ -209,6 +213,7 @@ class VxmDeformable(ne.models.BasicUNet):
         if register:
             # output_list: [warped_source, pos_flow]
             output_list.append(pos_flow)
+
         else:
             # output_list: [warped_source, preintegrated_flow]
             output_list.append(preintegrated_flow)
