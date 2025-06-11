@@ -30,7 +30,7 @@ class VxmDeformable(ne.models.BasicUNet):
     nb_features : List[int], optional
         List of integers specifying the number of features in each
         level of the UNet architecture. Default is `[16, 16, 16, 16, 16]`.
-    norms : Union[List[str], str], optional
+    normalizations : Union[List[str], str], optional
         Normalization layers for the UNet. Can be a list of normalization
         types or a single normalization type. Default is `None`.
     activations : Union[List[str], str], optional
@@ -68,7 +68,7 @@ class VxmDeformable(ne.models.BasicUNet):
         in_channels: int,
         out_channels: int,
         nb_features: List[int] = (16, 16, 16, 16, 16),
-        norms: Union[List[Union[Callable, str]], Callable, str, None] = None,
+        normalizations: Union[List[Union[Callable, str]], Callable, str, None] = None,
         activations: Union[List[Union[Callable, str]], Callable, str, None] = nn.ReLU,
         order: str = 'caca',
         final_activation: Union[str, nn.Module, None] = None,
@@ -96,9 +96,9 @@ class VxmDeformable(ne.models.BasicUNet):
         nb_features : List[int]
             Number of features at each level of the unet. Must be a list of
             positive integers.
-        norms : Union[List[str], str, None], optional
+        normalizations : Union[List[str], str, None], optional
             Normalization layers to use in each block. Can be a string or a list
-            of strings specifying norms for each layer, or `None` for no norm.
+            of strings specifying normalizations for each layer, or `None` for no norm.
         activations : Union[List[str], str, Callable], optional
             Activation functions to use in each block. Can be a callable,
             a string, or a list of strings/callables.
@@ -120,7 +120,7 @@ class VxmDeformable(ne.models.BasicUNet):
 
         super().__init__(
             ndim=ndim, in_channels=in_channels, out_channels=out_channels, nb_features=nb_features,
-            norms=norms, activations=activations, order=order, final_activation=final_activation
+            normalizations=normalizations, activations=activations, order=order, final_activation=final_activation
         )
 
         # Configure bidirectional cost/training
