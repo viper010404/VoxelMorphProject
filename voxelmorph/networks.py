@@ -12,7 +12,7 @@ import neurite as ne
 from . import layers
 
 
-class VxmDeformable(ne.BasicUNet):
+class VxmDeformable(ne.models.BasicUNet):
     """
     A network archetecture built on `BasicUNet` to perform nD image registration using a flow
     field.
