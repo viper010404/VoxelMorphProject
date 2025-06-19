@@ -23,19 +23,9 @@ class SpatialTransformer(nn.Module):
     ----------
     If you find this helpful, please cite the following paper:
 
-    @ARTICLE{8633930,
-        author={Balakrishnan, Guha and Zhao, Amy and Sabuncu, Mert R. and Guttag, John and Dalca,
-        Adrian V.},
-        journal={IEEE Transactions on Medical Imaging},
-        title={VoxelMorph: A Learning Framework for Deformable Medical Image Registration},
-        year={2019},
-        volume={38},
-        number={8},
-        pages={1788-1800},
-        keywords={Strain;Training;Biomedical imaging;Image segmentation;Optimization;Image
-        registration; Three-dimensional displays;Registration;machine learning;convolutional neural
-        networks}, doi={10.1109/TMI.2019.2897538}
-        }
+    VoxelMorph: A Learning Framework for Deformable Medical Image Registration 
+    G. Balakrishnan, A. Zhao, M. R. Sabuncu, J. Guttag, A.V. Dalca. 
+    IEEE TMI: Transactions on Medical Imaging. 38(8). pp 1788-1800. 2019. 
     """
 
     def __init__(
