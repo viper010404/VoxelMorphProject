@@ -61,7 +61,7 @@ class SpatialTransformer(nn.Module):
         # buffer (without saving to `state_dict`: persistent=False)
         self.register_buffer(
             name='identity_grid',
-            tensor=ne.utils.make_grid(size=size, device=device),
+            tensor=ne.utils.utils.grid(size=size, device=device),
             persistent=False  # Don't save to this module's state dict!
         )
 
