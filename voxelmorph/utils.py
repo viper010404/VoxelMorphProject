@@ -10,7 +10,9 @@ __all__ = [
     "grid_coordinates",
     "spatial_transform",
     "displacement_field_to_coords",
-    "integrate_displacement_field"
+    "integrate_displacement_field",
+    "angles_to_rotation_matrix",
+    "compose_affine"
 ]
 
 
@@ -180,3 +182,140 @@ def integrate_displacement_field(
         disp += spatial_transform(disp.movedim(-1, 0), disp, meshgrid=meshgrid).movedim(0, -1)
 
     return disp
+
+
+def angles_to_rotation_matrix(
+    rotation: Tensor,
+    degrees: bool = True
+) -> Tensor:
+    """
+    Compute a rotation matrix from the given rotation angles.
+
+    Parameters
+    ----------
+    rotation : Tensor
+        A tensor containing the rotation angles. If `degrees` is True, the angles
+        are in degrees, otherwise they are in radians.
+    degrees : bool, optional
+        Whether to interpret the rotation angles as degrees.
+
+    Returns
+    -------
+    Tensor
+        The computed `(ndim + 1, ndim + 1)` rotation matrix.
+    """
+    if degrees:
+        rotation = torch.deg2rad(rotation)
+
+    # scalar value allowed for 2D transforms
+    rotation = torch.as_tensor(rotation)
+    if rotation.ndim == 0:
+        rotation = rotation.view(1)
+    num_angles = len(rotation)
+
+    # build the matrix
+    if num_angles == 1:
+        c, s = torch.cos(rotation[0]), torch.sin(rotation[0])
+        matrix = torch.tensor([[c, -s], [s, c]], dtype=torch.float64)
+    elif num_angles == 3:
+        c, s = torch.cos(rotation[0]), torch.sin(rotation[0])
+        rx = torch.tensor([[1, 0, 0], [0, c, s], [0, -s, c]], dtype=torch.float64)
+        c, s = torch.cos(rotation[1]), torch.sin(rotation[1])
+        ry = torch.tensor([[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=torch.float64)
+        c, s = torch.cos(rotation[2]), torch.sin(rotation[2])
+        rz = torch.tensor([[c, s, 0], [-s, c, 0], [0, 0, 1]], dtype=torch.float64)
+        matrix = rx @ ry @ rz
+    else:
+        raise ValueError(f'expected 1 (2D) or 3 (3D) rotation angles, got {num_angles}')
+
+    return matrix.to(rotation.device)
+
+
+def compose_affine(
+    ndim: int,
+    translation: Tensor = None,
+    rotation: Tensor = None,
+    scale: Tensor = None,
+    shear: Tensor = None,
+    degrees: bool = True,
+    device: torch.device = None
+) -> Tensor:
+    """
+    Composes an affine matrix from a set of translation, rotation, scale,
+    and shear transform components.
+
+    Parameters
+    ----------
+    ndim (int):
+        The number of dimensions of the affine matrix. Must be 2 or 3.
+    translation : Tensor, optional
+        The translation vector. Must be a vector of size `ndim`. 
+    rotation : Tensor, optional
+        The rotation angles. Must be a scalar value for 2D affine matrices, 
+        and a tensor of size 3 for 3D affine matrices.
+    scale : Tensor, optional
+        The scaling factor. Can be scalar or vector of size `ndim`.
+    shear : Tensor, optional
+        The shearing factor. Must be a scalar value for 2D affine matrices, 
+        and a tensor of size 3 for 3D affine matrices.
+    degrees : bool, optional
+        Whether to interpret the rotation angles as degrees.
+    device : torch.device, optional
+        The device of the returned matrix.
+
+    Returns
+    -------
+    Tensor
+        The composed affine matrix, as a tensor of shape `(ndim + 1, ndim + 1)`.
+    """
+    if ndim not in (2, 3):
+        raise ValueError(f'affine transform must be 2D or 3D, got ndim {ndim}')
+
+    # check translation
+    translation = torch.zeros(ndim) if translation is None else torch.as_tensor(translation)
+    if len(translation) != ndim:
+        raise ValueError(f'translation must be of shape ({ndim},)')
+
+    # check rotation angles
+    expected = 3 if ndim == 3 else 1
+    rotation = torch.zeros(expected) if rotation is None else torch.as_tensor(rotation)
+    if rotation.ndim == 0 and ndim == 3 or rotation.ndim != 0 and rotation.shape[0] != expected:
+        raise ValueError(f'rotation must be of shape ({expected},)')
+
+    # check scaling factor
+    scale = torch.ones(ndim) if scale is None else torch.as_tensor(scale)
+    if scale.ndim == 0:
+        scale = scale.repeat(ndim)
+    if scale.shape[0] != ndim:
+        raise ValueError(f'scale must be of size {ndim}')
+
+    # check shearing
+    expected = 3 if ndim == 3 else 1
+    shear = torch.zeros(expected) if shear is None else torch.as_tensor(shear)
+    if shear.ndim == 0:
+        shear = shear.view(1)
+    if shear.shape[0] != expected:
+        raise ValueError(f'shear must be of shape ({expected},)')
+
+    # start from translation
+    T = torch.eye(ndim + 1, dtype=torch.float64)
+    T[:ndim, -1] = translation
+
+    # rotation matrix
+    R = torch.eye(ndim + 1, dtype=torch.float64)
+    R[:ndim, :ndim] = angles_to_rotation_matrix(rotation, degrees=degrees)
+
+    # scaling
+    Z = torch.diag(torch.cat([scale, torch.ones(1, dtype=torch.float64)]))
+
+    # shear matrix
+    S = torch.eye(ndim + 1, dtype=torch.float64)
+    S[0][1] = shear[0]
+    if ndim == 3:
+        S[0][2] = shear[1]
+        S[1][2] = shear[2]
+
+    # compose component matrices
+    matrix = T @ R @ Z @ S
+
+    return torch.as_tensor(matrix, dtype=torch.float32, device=device)
