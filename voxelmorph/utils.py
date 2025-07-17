@@ -2,8 +2,11 @@
 Utilities for the `voxelmorph` project.
 """
 
+from typing import List, Union
+
 import torch
 from torch import Tensor
+import numpy as np
 
 __all__ = [
     "affine_to_displacement_field",
@@ -12,7 +15,12 @@ __all__ = [
     "displacement_field_to_coords",
     "integrate_displacement_field",
     "angles_to_rotation_matrix",
-    "compose_affine"
+    "compose_affine",
+    "gaussian_kernel_1d",
+    "gaussian_blur",
+    "smooth_gaussian",
+    "perlin",
+    "random_displacement_field",
 ]
 
 
@@ -251,12 +259,12 @@ def compose_affine(
     translation : Tensor, optional
         The translation vector. Must be a vector of size `ndim`. 
     rotation : Tensor, optional
-        The rotation angles. Must be a scalar value for 2D affine matrices, 
+        The rotation angles. Must be a scalar value for 2D affine matrices,
         and a tensor of size 3 for 3D affine matrices.
     scale : Tensor, optional
         The scaling factor. Can be scalar or vector of size `ndim`.
     shear : Tensor, optional
-        The shearing factor. Must be a scalar value for 2D affine matrices, 
+        The shearing factor. Must be a scalar value for 2D affine matrices,
         and a tensor of size 3 for 3D affine matrices.
     degrees : bool, optional
         Whether to interpret the rotation angles as degrees.
@@ -319,3 +327,260 @@ def compose_affine(
     matrix = T @ R @ Z @ S
 
     return torch.as_tensor(matrix, dtype=torch.float32, device=device)
+
+
+def gaussian_kernel_1d(sigma, truncate: int = 3, device=None, dtype=None):
+    """
+    Generate a 1D Gaussian kernel with the specified standard deviations.
+
+    Parameters
+    ----------
+    sigma : float
+        A list of standard deviations for each dimension.
+    truncate : int, optional
+        The number of standard deviations to extend the kernel before truncating.
+    device : torch.device, optional
+        The device on which to create the kernel.
+    dtype : torch.dtype | None, optional
+        Data type of the returned kernel.
+
+    Returns
+    -------
+    Tensor
+        A kernel of shape `2 * truncate * sigma + 1`.
+
+    Notes
+    -----
+    The kernel is truncated when its values drop below `1e-5` of the maximum value.
+    """
+    r = int(truncate * sigma + 0.5)
+    x = torch.arange(-r, r + 1, device=device, dtype=dtype)
+    sigma2 = 1 / torch.clip(torch.as_tensor(sigma), min=1e-5).pow(2)
+    pdf = torch.exp(-0.5 * (x.pow(2) * sigma2))
+    return pdf / pdf.sum()
+
+
+def gaussian_blur(
+    image: Tensor,
+    sigma: List[float],
+    batched: bool = False,
+    truncate: int = 3,
+) -> Tensor:
+    """
+    Apply Gaussian blurring to an image.
+
+    Parameters
+    ----------
+    image : Tensor
+        An input tensor of shape `(C, W, H[, D])` to blur. A batch dimension
+        can be included by setting `batched` to `True`.
+    sigma : float or List[float]
+        Standard deviation(s) of the Gaussian filter along each dimension.
+    batched : bool, optional
+        Whether the input tensor includes a batch dimension.
+    truncate : int, optional
+        The number of standard deviations to extend the kernel before truncating.
+
+    Returns
+    -------
+    Tensor
+        The blurred tensor with the same shape as the input tensor.
+
+    Notes
+    -----
+    The Gaussian filter is applied using convolution. The size of the filter kernel is
+    determined by the standard deviation and the truncation factor.
+    """
+    ndim = image.ndim - (2 if batched else 1)
+
+    # sanity check for common mistake
+    if ndim == 4 and not batched:
+        raise ValueError(
+            f'gaussian blur input has {image.ndim} dims, but batched option is False'
+        )
+
+    # normalize sigmas
+    if torch.as_tensor(sigma).ndim == 0:
+        sigma = [sigma] * ndim
+    if len(sigma) != ndim:
+        raise ValueError(f'sigma must be {ndim}D, but got length {len(sigma)}')
+
+    blurred = image if batched else image.unsqueeze(0)
+
+    if all(s == sigma[0] for s in sigma):
+        # Isotropic, can use the same vector in all directions cases. Since
+        # creating the kernel is actually one of the most time intensive steps
+        # this is an efficiency gain worth exploiting
+        kernel_vec = gaussian_kernel_1d(
+            sigma[0],
+            truncate,
+            device=blurred.device,
+            dtype=blurred.dtype,
+        )
+        kernel_vecs = [kernel_vec] * ndim
+    else:
+        # Three different kernels, one for each direction
+        kernel_vecs = [
+            gaussian_kernel_1d(
+                s,
+                truncate,
+                device=blurred.device,
+                dtype=blurred.dtype,
+            )
+            for s in sigma
+        ]
+
+    for dim, kernel in enumerate(kernel_vecs):
+
+        # apply the convolution
+        slices = [None] * (ndim + 2)
+        slices[dim + 2] = slice(None)
+        kernel_dim = kernel[slices]
+        conv = getattr(torch.nn.functional, f'conv{ndim}d')
+        blurred = conv(blurred, kernel_dim, groups=image.shape[0], padding="same")
+
+    if not batched:
+        blurred = blurred.squeeze(0)
+
+    return blurred
+
+
+def smooth_gaussian(shape, sigma, magnitude=1.0, device=None, method='blur'):
+    """
+    Generates a smooth Gaussian noise image.
+
+    Parameters
+    ----------
+    shape : List[int]
+        The desired shape of the output tensor. Can be 2D or 3D.
+    sigma : float
+        The spatial smoothing sigma in voxel coordinates.
+    magnitude : float
+        The standard deviation of the noise.
+    device : torch.device or None, optional
+        The device on which the output tensor is allocated. If None, defaults to CPU.
+    method : 'blur' or 'upsample'
+        Method for noise generation. Upsampling is much faster and more memory efficient
+        for larger sigma values, but at the cost of quality.
+
+    Returns
+    -------
+    Tensor
+        A smooth Gaussian noise image of shape `shape`.
+    """
+    if method == 'blur':
+        noise = torch.normal(0, 1, size=shape, device=device)
+        noise = gaussian_blur(noise.unsqueeze(0), sigma).squeeze(0)
+    elif method == 'upsample':
+        downshape = tuple([max(int(s // sigma), 2) for s in shape])
+        noise = torch.normal(0, 1, size=(1, 1, *downshape), device=device)
+        mode = 'trilinear' if len(shape) == 3 else 'bilinear'
+        noise = torch.nn.functional.interpolate(noise, shape, mode=mode).view(shape)
+    else:
+        raise ValueError(f'unknown smooth gaussian method `{method}`')
+
+    # in-place normalize
+    noise -= noise.mean()
+    noise *= magnitude / noise.std()
+    return noise
+
+
+def perlin(
+    shape,
+    smoothing: Union[float, List[float]] = None,
+    magnitude: Union[float, List[float]] = 1.0,
+    weights=None,
+    device=None,
+    method='blur'
+):
+    """
+    Generates a perlin noise image.
+
+    Parameters
+    ----------
+    shape : List[int]
+        The desired shape of the output tensor. Can be 2D or 3D.
+    smoothing : float or List[float]
+        The spatial smoothing sigma(s) in voxel coordinates.
+    magnitude : float
+        The standard deviation of the noise.
+    weights : float or List[float]
+        The weights of the smoothing components (scales). If None, defaults
+        to monotonically increasing weights.
+    device : torch.device or None, optional
+        The device on which the output tensor is allocated. If None, defaults to CPU.
+    method : 'blur' or 'upsample'
+        Method for noise generation. Upsampling is much faster and more memory efficient
+        for larger sigma values, but at the cost of quality.
+
+    Returns
+    -------
+    Tensor
+        A Perlin noise image of shape `shape`.
+    """
+    if smoothing is None:
+        smoothing = 2 ** np.arange(np.log2(max(shape)))[1:]
+
+    elif np.isscalar(smoothing):
+        return smooth_gaussian(
+            shape, smoothing, magnitude, device=device, method=method
+        )
+
+    if len(smoothing) == 1:
+        weights = [None]
+
+    elif weights is None:
+        weights = np.arange(len(smoothing)) + 1
+
+    noise = None
+    for s, w in zip(smoothing, weights):
+
+        # generate smooth field
+        sample = smooth_gaussian(shape, s, device=device, method=method)
+        if w is not None:
+            sample *= w
+
+        # merge the noise at this scale with the rest
+        if noise is None:
+            noise = sample
+
+        else:
+            noise += sample
+
+    # in-place normalize
+    noise -= noise.mean()
+    noise *= magnitude / noise.std()
+    return noise
+
+
+def random_displacement_field(
+    shape: List[int],
+    smoothing: Union[float, List[float]] = 10,
+    magnitude: Union[float, List[float]] = 10,
+    integrations: int = 0,
+    voxsize: float = 1,
+    meshgrid: Tensor = None,
+    device: torch.device = None,
+    perlin_method: str = 'upsample'
+) -> Tensor:
+    """
+    TODOC
+    """
+
+    # Perlin can take a list so
+    smoothing = smoothing / voxsize
+    magnitude = magnitude / voxsize
+
+    # randomly sample a displacement crs field of the input shape
+    ndim = len(shape)
+    disp = [
+        perlin(
+            shape, smoothing, magnitude, method=perlin_method, device=device
+        ) for i in range(ndim)
+    ]
+    disp = torch.stack(disp, dim=-1)
+
+    if integrations > 0:
+        disp = integrate_displacement_field(disp, integrations, meshgrid)
+
+    return disp
