@@ -215,3 +215,45 @@ def test_angles_to_rotation_matrix_3d_90_degrees():
 
     assert torch.allclose(rotation_matrix, expected, atol=1e-5)
 
+
+def test_compose_affine_translation_shear():
+    """
+    Composing two translations should yield the sum of the two translations.
+    """
+
+    translation = (1, 2)
+
+    result_affine = vxm.utils.compose_affine(
+        ndim=2,
+        translation=translation,
+        shear=9,
+    ).to(torch.float64)
+
+    expected_affine = torch.tensor([[1, 9, 1], [0, 1, 2], [0, 0, 1]], dtype=torch.float64)
+
+    assert torch.allclose(result_affine, expected_affine, atol=1e-5)
+
+
+def test_resize_scale_nearest_int():
+    """
+    Nearest-neighbor upsampling of an integer image should replicate pixels.
+    """
+    img = torch.tensor([[[1, 2],
+                         [3, 4]]],
+                       dtype=torch.int32)
+    out = vxm.utils.resize(img, scale_factor=2.0, nearest=True)
+
+    # Expect each pixel to become a 2×2 block
+    expected = torch.tensor(
+        [
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [3, 3, 4, 4],
+            [3, 3, 4, 4]
+        ],
+        dtype=torch.int32
+    ).unsqueeze(0)
+
+    assert out.shape == (1, 4, 4)
+    assert out.dtype == img.dtype
+    assert torch.allclose(out, expected)
