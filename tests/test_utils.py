@@ -4,7 +4,7 @@ Unit tests for the basic utility functions in voxelmorph.
 
 import torch
 
-import voxelmorph as vxm
+import voxelmorph.nn.functional as vxf
 
 
 def test_grid_coordinates_2d():
@@ -12,7 +12,7 @@ def test_grid_coordinates_2d():
     grid_coordinates() should produce a (H, W, 2) mesh of (i, j) indices.
     """
     shape = (2, 3)
-    grid = vxm.utils.grid_coordinates(shape)
+    grid = vxf.grid_coordinates(shape)
 
     # Check shape of grid
     assert grid.shape == (2, 3, 2)
@@ -34,7 +34,7 @@ def test_grid_coordinates_3d():
     grid_coordinates should produce a (D, H, W, 3) mesh of (z, y, x) indices.
     """
     shape = (2, 2, 2)
-    grid = vxm.utils.grid_coordinates(shape)
+    grid = vxf.grid_coordinates(shape)
 
     # shape check
     assert grid.shape == (2, 2, 2, 3)
@@ -49,7 +49,7 @@ def test_affine_to_displacement_field_identity():
     Identity affine should produce zero displacement everywhere.
     """
     shape = (3, 4)
-    grid = vxm.utils.grid_coordinates(shape)
+    grid = vxf.grid_coordinates(shape)
     ndim = len(shape)
 
     # Identity affine
@@ -60,7 +60,7 @@ def test_affine_to_displacement_field_identity():
     )
 
     # Get displacement field
-    disp = vxm.utils.affine_to_displacement_field(affine, grid)
+    disp = vxf.affine_to_displacement_field(affine, grid)
 
     # output shape and dtype
     assert disp.shape == shape + (ndim,)
@@ -75,7 +75,7 @@ def test_affine_to_displacement_field_translation():
     Pure translation affine should yield a constant field = translation.
     """
     shape = (2, 2)
-    grid = vxm.utils.grid_coordinates(shape)
+    grid = vxf.grid_coordinates(shape)
     ndim = len(shape)
     tx, ty = 2.0, 3.0
 
@@ -89,7 +89,7 @@ def test_affine_to_displacement_field_translation():
     affine[1, -1] = ty
 
     # Get displacement field
-    disp = vxm.utils.affine_to_displacement_field(affine, grid)
+    disp = vxf.affine_to_displacement_field(affine, grid)
 
     # expected a field of shape (2,2,2) filled with [tx,ty]
     expected = torch.stack(
@@ -110,7 +110,7 @@ def test_displacement_field_to_coords_zero_disp_2d():
     (col, row).
     """
     disp = torch.zeros(2, 3, 2, dtype=torch.float32)
-    coords = vxm.utils.displacement_field_to_coords(disp)
+    coords = vxf.displacement_field_to_coords(disp)
 
     # For shape=(2,3):
     #  row indices i \isin {0, 1} -> bounded on [-1, 1] with 2 elements -> [-1, 1]
@@ -130,7 +130,7 @@ def test_spatial_transform_none_trf_returns_input():
     If trf is None, spatial_transform should return the input image.
     """
     img = torch.rand(1, 5, 5)
-    out = vxm.utils.spatial_transform(img, None)
+    out = vxf.spatial_transform(img, None)
 
     assert out.shape == img.shape
     assert torch.allclose(out, img)
@@ -144,7 +144,7 @@ def test_spatial_transform_identity_affine():
 
     # 2D identity affine (3×3)
     affine = torch.eye(3, dtype=torch.float32)
-    out = vxm.utils.spatial_transform(img, affine)
+    out = vxf.spatial_transform(img, affine)
 
     assert out.shape == img.shape
     assert torch.allclose(out, img, atol=1e-6)
@@ -154,7 +154,7 @@ def test_angles_to_rotation_matrix_2d_identity():
     """
     A 2D rotation of 0 deg must yield the 2x2 identity matrix.
     """
-    rotation_matrix = vxm.utils.angles_to_rotation_matrix(torch.tensor(0.0), degrees=True)
+    rotation_matrix = vxf.angles_to_rotation_matrix(torch.tensor(0.0), degrees=True)
     expected = torch.eye(2, dtype=torch.float64)
 
     assert rotation_matrix.shape == (2, 2)
@@ -166,7 +166,7 @@ def test_angles_to_rotation_matrix_2d_90_degrees():
     """
     A 2D rotation of 90 degrees should be [[0, -1], [1, 0]].
     """
-    rotation_matrix = vxm.utils.angles_to_rotation_matrix(torch.tensor(90.0), degrees=True)
+    rotation_matrix = vxf.angles_to_rotation_matrix(torch.tensor(90.0), degrees=True)
 
     expected = torch.tensor(
         [
@@ -183,7 +183,7 @@ def test_angles_to_rotation_matrix_2d_pi_over_2_radians():
     """
     With degrees=False and angle=pi/2, result should match the 90° case.
     """
-    rotation_matrix = vxm.utils.angles_to_rotation_matrix(torch.tensor(torch.pi / 2), degrees=False)
+    rotation_matrix = vxf.angles_to_rotation_matrix(torch.tensor(torch.pi / 2), degrees=False)
     expected = torch.tensor(
         [
             [0.0, -1.0],
@@ -201,7 +201,7 @@ def test_angles_to_rotation_matrix_3d_90_degrees():
      [-1, 0, 0],
      [0, 0, 1]]
     """
-    rotation_matrix = vxm.utils.angles_to_rotation_matrix(torch.tensor((0, 0, 90.0)), degrees=True)
+    rotation_matrix = vxf.angles_to_rotation_matrix(torch.tensor((0, 0, 90.0)), degrees=True)
 
     expected = torch.tensor(
         [
@@ -222,7 +222,7 @@ def test_compose_affine_translation_shear():
 
     translation = (1, 2)
 
-    result_affine = vxm.utils.compose_affine(
+    result_affine = vxf.compose_affine(
         ndim=2,
         translation=translation,
         shear=9,
@@ -240,7 +240,7 @@ def test_resize_scale_nearest_int():
     img = torch.tensor([[[1, 2],
                          [3, 4]]],
                        dtype=torch.int32)
-    out = vxm.utils.resize(img, scale_factor=2.0, nearest=True)
+    out = vxf.resize(img, scale_factor=2.0, nearest=True)
 
     # Expect each pixel to become a 2×2 block
     expected = torch.tensor(
