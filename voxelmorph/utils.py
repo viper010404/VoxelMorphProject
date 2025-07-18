@@ -2,7 +2,7 @@
 Utilities for the `voxelmorph` project.
 """
 
-from typing import List, Union
+from typing import List, Union, Optional, Sequence, Literal
 
 import torch
 from torch import Tensor
@@ -33,7 +33,7 @@ __all__ = [
 def affine_to_displacement_field(
     affine: Tensor,
     meshgrid: Tensor,
-    rotate_around_center: bool = True
+    rotate_around_center: Optional[bool] = True
 ) -> Tensor:
     """
     Convert an affine transformation matrix to a dense displacement field.
@@ -41,7 +41,8 @@ def affine_to_displacement_field(
     Parameters
     ----------
     affine : Tensor
-        Affine transformation matrix. It is expected to be a vox2vox target to source transformation.
+        Affine transformation matrix. It is expected to be a vox2vox target to source
+        transformation.
     meshgrid : Tensor
         The meshgrid tensor of shape `(W, H[, D], N)`, where N is the spatial dimensionality.
     rotate_around_center : bool, optional
@@ -79,12 +80,50 @@ def affine_to_displacement_field(
     return shift
 
 
-def grid_coordinates(shape, device: torch.device = None) -> Tensor:
+def grid_coordinates(
+    shape: Sequence[int],
+    indexing: Optional[Literal['ij', 'xy']] = 'ij',
+    dtype: Optional[torch.dtype] = torch.float32,
+    device: Optional[torch.device] = None
+) -> Tensor:
     """
-    TODOC
+    Generates a grid of coordinates with the specified spatial shape.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        The spatial shape of the grid to generate.
+    indexing : {'ij', 'xy'}, optional
+        The indexing convention to use. 'ij' for matrix indexing, 'xy' for Cartesian
+        indexing. Default is 'ij'.
+    dtype : torch.dtype, optional
+        The desired data type of the output tensor. Default is torch.float32.
+    device : torch.device, optional
+        The device on which to create the tensor. Default is None, which uses the
+        current device.
+
+    Returns
+    -------
+    torch.Tensor
+        A tensor of shape (*shape, len(shape)) containing the grid coordinates.
+
+    Examples
+    --------
+    >>> grid_coordinates((2, 3))
+    tensor([[[0., 0.],
+             [0., 1.],
+             [0., 2.]],
+            [[1., 0.],
+             [1., 1.],
+             [1., 2.]]])
+    >>> grid_coordinates((1, 2, 2), device=torch.device('cuda:0'))
+    tensor([[[[0., 0., 0.],
+               [0., 0., 1.]],
+              [[0., 1., 0.],
+               [0., 1., 1.]]]], device='cuda:0')
     """
-    ranges = [torch.arange(s, dtype=torch.float32, device=device) for s in shape]
-    meshgrid = torch.stack(torch.meshgrid(*ranges, indexing='ij'), dim=-1)
+    ranges = [torch.arange(s, dtype=dtype, device=device) for s in shape]
+    meshgrid = torch.stack(torch.meshgrid(*ranges, indexing=indexing), dim=-1)
     return meshgrid
 
 
