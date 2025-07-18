@@ -24,7 +24,7 @@ __all__ = [
     "chance",
     "random_flip",
     "random_affine",
-    
+    "coords_to_displacement_field",
 ]
 
 
@@ -699,3 +699,16 @@ def random_affine(
         scale=scale,
         device=device)
     return aff
+
+
+def coords_to_displacement_field(coords, meshgrid=None) -> Tensor:
+    """
+    TODOC
+    """
+    if meshgrid is None:
+        meshgrid = grid_coordinates(coords.shape[:-1], device=coords.device)
+
+    raise NotImplementedError(
+        'coords_to_displacement_field is not yet implemented. '
+        'contact andrew if you get this... or implement it :)'
+    )
