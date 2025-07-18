@@ -21,6 +21,8 @@ __all__ = [
     "smooth_gaussian",
     "perlin",
     "random_displacement_field",
+    "chance",
+    "random_flip",
 ]
 
 
@@ -584,3 +586,51 @@ def random_displacement_field(
         disp = integrate_displacement_field(disp, integrations, meshgrid)
 
     return disp
+
+
+def chance(prob: float) -> bool:
+    """
+    Returns True with given probability.
+
+    Parameters
+    ----------
+    prob : float
+        Probability of returning True. Must be in the range [0, 1].
+
+    Returns
+    -------
+    bool
+        True with probability `prob`.
+    """
+    if prob < 0.0 or prob > 1.0:
+        raise ValueError(f'chance() expected a value in the range [0, 1], but got {prob}')
+    return np.random.rand() < prob
+
+
+def random_flip(
+    dim: int,
+    *args,
+    prob: float = 0.5
+):
+    """
+    Randomly flips an image (or set of images) along the given dimension.
+
+    Parameters
+    ----------
+    dim : int
+        The dimension along which to flip. Note that the first dimension
+        is the channel dimension.
+    *args : torch.Tensor
+        The image(s) to flip.
+    prob : float
+        The probability of flipping the image(s).
+
+    Returns
+    -------
+    torch.Tensor or tuple[torch.Tensor]
+        The flipped image(s).
+    """
+    result = tuple([arg.flip([dim]) for arg in args]) if chance(prob) else args
+    if len(args) == 1:
+        return result[0]
+    return result
