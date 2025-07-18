@@ -23,9 +23,9 @@ class SpatialTransformer(nn.Module):
     ----------
     If you find this helpful, please cite the following paper:
 
-    VoxelMorph: A Learning Framework for Deformable Medical Image Registration 
+    VoxelMorph: A Learning Framework for Deformable Medical Image Registration
     G. Balakrishnan, A. Zhao, M. R. Sabuncu, J. Guttag, A.V. Dalca. 
-    IEEE TMI: Transactions on Medical Imaging. 38(8). pp 1788-1800. 2019. 
+    IEEE TMI: Transactions on Medical Imaging. 38(8). pp 1788-1800. 2019.
     """
 
     def __init__(

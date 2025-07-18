@@ -1,3 +1,6 @@
+"""
+Models for the voxelmorph project.
+"""
 __all__ = [
     "VxmDeformable",
 ]
@@ -9,7 +12,7 @@ import torch.nn as nn
 import neurite as ne
 
 # TODO: Change this to `import voxelmorph as vm` or something
-from . import layers
+import voxelmorph as vxm
 
 
 class VxmDeformable(nn.Module):
@@ -301,7 +304,7 @@ class VxmDeformable(nn.Module):
         if not hasattr(self, "velocity_field_integrator"):
 
             # Dynamically construct the integrator based on the spatial shape
-            velocity_field_integrator = layers.IntegrateVelocityField(
+            velocity_field_integrator = vxm.layers.IntegrateVelocityField(
                 shape=pos_flow.shape[2:], steps=self.integration_steps, device=self.device
             )
 
@@ -345,7 +348,7 @@ class VxmDeformable(nn.Module):
 
         if not hasattr(self, "spatial_transformer"):
             # Dynamically construct the spatial transformer with the correct spatial shape
-            spatial_transformer = layers.SpatialTransformer(
+            spatial_transformer = vxm.layers.SpatialTransformer(
                 size=moving_image.shape[2:], device=self.device
             )
 
