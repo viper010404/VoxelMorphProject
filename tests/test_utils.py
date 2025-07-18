@@ -2,6 +2,7 @@
 Unit tests for the basic utility functions in voxelmorph.
 """
 
+from skimage.util import dtype
 import torch
 
 import voxelmorph as vxm
@@ -148,3 +149,54 @@ def test_spatial_transform_identity_affine():
 
     assert out.shape == img.shape
     assert torch.allclose(out, img, atol=1e-6)
+
+
+def test_angles_to_rotation_matrix_2d_identity():
+    """
+    A 2D rotation of 0 deg must yield the 2x2 identity matrix.
+    """
+    rotation_matrix = vxm.utils.angles_to_rotation_matrix(torch.tensor(0.0), degrees=True)
+    expected = torch.eye(2, dtype=torch.float64)
+
+    assert rotation_matrix.shape == (2, 2)
+    assert rotation_matrix.dtype == torch.float64
+    assert torch.allclose(rotation_matrix, expected, atol=1e-8)
+
+
+def test_angles_to_rotation_matrix_2d_90_degrees():
+    """
+    A 2D rotation of 90 degrees should be [[0, -1], [1, 0]].
+    """
+    rotation_matrix = vxm.utils.angles_to_rotation_matrix(torch.tensor(90.0), degrees=True)
+    
+    expected = torch.tensor(
+        [
+            [0.0, -1.0],
+            [1.0, 0.0]
+        ],
+        dtype=torch.float64
+    )
+
+    assert torch.allclose(rotation_matrix, expected, atol=1e-5)
+
+
+def test_angles_to_rotation_matrix_3d_90_degrees():
+    """
+    A 3D rotation of 90 degrees around the z axis should be:
+    [[0, 1, 0],
+     [-1, 0, 0],
+     [0, 0, 1]]
+    """
+    rotation_matrix = vxm.utils.angles_to_rotation_matrix(torch.tensor((0, 0, 90.0)), degrees=True)
+
+    expected = torch.tensor(
+        [
+            [0, 1, 0],
+            [-1, 0, 0],
+            [0, 0, 1],
+        ],
+        dtype=torch.float64
+    )
+
+    assert torch.allclose(rotation_matrix, expected, atol=1e-5)
+
