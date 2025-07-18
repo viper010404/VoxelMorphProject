@@ -20,5 +20,4 @@ if curv is None or version.parse(curv) < version.parse(minv):
 from . import nn
 from . import py
 
-from . import layers
 from . import losses
