@@ -1,5 +1,5 @@
 """
-Utilities for the `voxelmorph` project.
+Functional utilities written in pytorch for the `voxelmorph` project.
 """
 
 from typing import List, Union, Optional, Sequence, Literal

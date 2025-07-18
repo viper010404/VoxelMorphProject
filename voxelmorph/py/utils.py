@@ -2,7 +2,6 @@
 import os
 import csv
 import pathlib
-import functools
 
 # third party imports
 import numpy as np

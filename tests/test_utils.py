@@ -2,7 +2,6 @@
 Unit tests for the basic utility functions in voxelmorph.
 """
 
-from skimage.util import dtype
 import torch
 
 import voxelmorph as vxm
