@@ -168,7 +168,7 @@ def test_angles_to_rotation_matrix_2d_90_degrees():
     A 2D rotation of 90 degrees should be [[0, -1], [1, 0]].
     """
     rotation_matrix = vxm.utils.angles_to_rotation_matrix(torch.tensor(90.0), degrees=True)
-    
+
     expected = torch.tensor(
         [
             [0.0, -1.0],
@@ -177,6 +177,21 @@ def test_angles_to_rotation_matrix_2d_90_degrees():
         dtype=torch.float64
     )
 
+    assert torch.allclose(rotation_matrix, expected, atol=1e-5)
+
+
+def test_angles_to_rotation_matrix_2d_pi_over_2_radians():
+    """
+    With degrees=False and angle=pi/2, result should match the 90° case.
+    """
+    rotation_matrix = vxm.utils.angles_to_rotation_matrix(torch.tensor(torch.pi / 2), degrees=False)
+    expected = torch.tensor(
+        [
+            [0.0, -1.0],
+            [1.0, 0.0]
+        ],
+        dtype=torch.float64
+    )
     assert torch.allclose(rotation_matrix, expected, atol=1e-5)
 
 
