@@ -25,6 +25,7 @@ __all__ = [
     "random_flip",
     "random_affine",
     "coords_to_displacement_field",
+    "random_transform",
 ]
 
 
@@ -712,3 +713,83 @@ def coords_to_displacement_field(coords, meshgrid=None) -> Tensor:
         'coords_to_displacement_field is not yet implemented. '
         'contact andrew if you get this... or implement it :)'
     )
+
+
+def random_transform(
+    shape: List[int],
+    affine_probability: float = 1.0,
+    max_translation: float = 5.0,
+    max_rotation: float = 5.0,
+    max_scaling: float = 1.1,
+    warp_probability: float = 1.0,
+    warp_integrations: int = 5,
+    warp_smoothing_range: List[int] = [10, 20],
+    warp_magnitude_range: List[int] = [1, 2],
+    voxsize: int = 1,
+    device: torch.device = None,
+    isdisp: bool = True,
+    perlin_method: str = 'upsample',
+    sampling: bool = True,
+) -> Tensor:
+    """
+    generate a randomly sampled transform
+
+    Parameters:
+    -----------
+    disp: torch.Tensor
+        Displacement crs field
+    meshgrid: torch.Tensor, optional
+       crs grid for the image shape
+
+    Returns:
+    --------
+    torch.Tensor:
+       displacement crs field, or
+       absolute crs field scaled to range [-1, 1] if isdisp is False
+    """
+    ndim = len(shape)
+    trf = None
+
+    # generate a random affine
+    if chance(affine_probability):
+
+        # compute meshgrid, it is the target crs
+        meshgrid = grid_coordinates(shape, device=device)
+
+        # convert max_translation from mm to voxel
+        # the matrix returned from random_affine() is vox2vox rotating around the image center.
+        # it is used as target to source transformation in affine_to_displacement_field() to covert
+        # the vox2vox matrix to dispacement field.
+        max_translation = max_translation / voxsize
+        matrix = random_affine(
+            ndim=ndim,
+            max_translation=max_translation,
+            max_rotation=max_rotation,
+            max_scaling=max_scaling,
+            device=device,
+            sampling=sampling)
+        trf = affine_to_displacement_field(matrix, meshgrid)
+
+    # generate a nonlinear transform
+    if chance(warp_probability):
+        disp = random_displacement_field(
+            shape=shape,
+            smoothing=np.random.uniform(*warp_smoothing_range),
+            magnitude=np.random.uniform(*warp_magnitude_range),
+            integrations=warp_integrations,
+            voxsize=voxsize,
+            device=device,
+            perlin_method=perlin_method)
+
+        # merge with the affine transform if necessary
+        if trf is None:
+            trf = disp
+        else:
+            trf += spatial_transform(disp.movedim(-1, 0), trf, meshgrid=meshgrid).movedim(0, -1)
+
+    # convert to coordinates if specified
+    if trf is not None and not isdisp:
+        # compute the absolute crs field scaled to range [-1, 1]
+        trf = displacement_field_to_coords(trf)
+
+    return trf
