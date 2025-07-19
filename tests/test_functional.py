@@ -2,7 +2,10 @@
 Unit tests for the basic utility functions in voxelmorph.
 """
 
+# Standard library imports
 import torch
+
+# Custom imports
 import voxelmorph.nn.functional as vxf
 
 

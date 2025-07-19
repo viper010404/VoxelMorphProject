@@ -1,14 +1,14 @@
-# internal python imports
+# Standard library imports
 import os
 import csv
 import pathlib
 
-# third party imports
+# Third-party Imports
 import numpy as np
 import scipy
 from skimage import measure
 
-# local/our imports
+# Custom imports
 import pystrum.pynd.ndutils as nd
 
 

@@ -35,14 +35,17 @@ implied. See the License for the specific language governing permissions and lim
 the License.
 """
 
+# Standard library imports
 import os
 import argparse
 
-# third party
+# Third-party imports
 import torch
 
 os.environ['NEURITE_BACKEND'] = 'pytorch'
 os.environ['VXM_BACKEND'] = 'pytorch'
+
+# Custom imports
 import voxelmorph as vxm   # nopep8
 
 # parse commandline args

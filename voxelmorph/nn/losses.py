@@ -1,7 +1,10 @@
+# Standard library imports
+import math
+
+# Third-party imports
 import torch
 import torch.nn.functional as F
 import numpy as np
-import math
 
 
 class NCC:

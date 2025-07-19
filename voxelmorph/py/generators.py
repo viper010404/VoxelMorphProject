@@ -1,7 +1,11 @@
+# Standard library imports
 import os
 import glob
+
+# Third-party imports
 import numpy as np
 
+# Custom imports
 import voxelmorph as vxm
 
 

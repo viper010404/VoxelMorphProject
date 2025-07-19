@@ -1,5 +1,10 @@
-import torch
+# Standard library imports
 import pytest
+
+# Third-party imports
+import torch
+
+# Custom imports
 import voxelmorph as vxm
 
 

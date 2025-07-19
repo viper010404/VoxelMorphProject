@@ -2,8 +2,10 @@
 Functional utilities written in pytorch for the `voxelmorph` project.
 """
 
+# Standard library imports
 from typing import List, Union, Optional, Sequence, Literal
 
+# Third-party imports
 import torch
 from torch import Tensor
 import numpy as np

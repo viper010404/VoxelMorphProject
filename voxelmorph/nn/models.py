@@ -5,13 +5,15 @@ __all__ = [
     "VxmDeformable",
 ]
 
+# Standard library imports
 from typing import List, Union, Callable, Tuple
 
+# Third-party imports
 import torch
 import torch.nn as nn
 import neurite as ne
 
-# TODO: Change this to `import voxelmorph as vm` or something
+# Custom imports
 import voxelmorph as vxm
 
 
