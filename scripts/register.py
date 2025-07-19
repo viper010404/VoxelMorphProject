@@ -43,7 +43,6 @@ import numpy as np
 import nibabel as nib
 import torch
 
-# import voxelmorph with pytorch backend
 os.environ['NEURITE_BACKEND'] = 'pytorch'
 os.environ['VXM_BACKEND'] = 'pytorch'
 import voxelmorph as vxm   # nopep8

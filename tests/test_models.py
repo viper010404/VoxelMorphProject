@@ -1,6 +1,6 @@
 import torch
 import pytest
-from voxelmorph.nn.models import VxmDeformable
+import voxelmorph as vxm
 
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def test_forward_output_shape(dummy_input_pair):
     the bidirectional cost.
     """
 
-    model = VxmDeformable(
+    model = vxm.nn.models.VxmDeformable(
         ndim=3,
         in_channels=2,
         out_channels=3,  # Spatial Transformer expects 3 output channels for the 3 spatial dims
