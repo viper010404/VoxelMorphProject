@@ -41,7 +41,7 @@ def test_register_mode(dummy_input_pair):
     Test that forward pass with registration returns warped source and integrated flow field.
     """
 
-    model = VxmDeformable(
+    model = vxm.nn.models.VxmDeformable(
         ndim=3,
         in_channels=2,
         out_channels=3,
@@ -60,7 +60,7 @@ def test_spatial_transformer_initialized(dummy_input_pair):
     Test that the spatial transformer module is lazily initialized.
     """
 
-    model = VxmDeformable(
+    model = vxm.nn.models.VxmDeformable(
         ndim=3,
         in_channels=2,
         out_channels=3,
