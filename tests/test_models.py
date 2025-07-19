@@ -1,6 +1,6 @@
 import torch
 import pytest
-from voxelmorph.networks import VxmDeformable
+from voxelmorph.nn.models import VxmDeformable
 
 
 @pytest.fixture
