@@ -35,7 +35,6 @@ License.
 """
 
 import os
-import random
 import argparse
 import time
 import numpy as np

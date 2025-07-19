@@ -3,7 +3,6 @@ Unit tests for the basic utility functions in voxelmorph.
 """
 
 import torch
-
 import voxelmorph.nn.functional as vxf
 
 

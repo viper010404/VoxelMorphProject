@@ -39,8 +39,6 @@ import os
 import argparse
 
 # third party
-import numpy as np
-import nibabel as nib
 import torch
 
 os.environ['NEURITE_BACKEND'] = 'pytorch'
