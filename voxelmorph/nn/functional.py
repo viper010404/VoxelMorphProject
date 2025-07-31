@@ -14,7 +14,7 @@ __all__ = [
     "affine_to_disp",
     "grid_coordinates",
     "spatial_transform",
-    "displacement_field_to_coords",
+    "disp_to_coords",
     "integrate_displacement_field",
     "angles_to_rotation_matrix",
     "compose_affine",
@@ -156,7 +156,7 @@ def spatial_transform(
 
     if isdisp:
         # convert the displacement crs to absolute crs scaled to range [-1, 1]
-        trf = displacement_field_to_coords(trf, meshgrid=meshgrid)
+        trf = disp_to_coords(trf, meshgrid=meshgrid)
 
     method = 'bilinear' if method == 'linear' else method
 
@@ -179,7 +179,7 @@ def spatial_transform(
     return interped
 
 
-def displacement_field_to_coords(disp, meshgrid=None) -> Tensor:
+def disp_to_coords(disp, meshgrid=None) -> Tensor:
     """
     Convert the displacement crs to absolute crs scaled to range [-1, 1].
 
@@ -802,7 +802,7 @@ def random_transform(
     # convert to coordinates if specified
     if trf is not None and not isdisp:
         # compute the absolute crs field scaled to range [-1, 1]
-        trf = displacement_field_to_coords(trf)
+        trf = disp_to_coords(trf)
 
     return trf
 

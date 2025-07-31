@@ -106,13 +106,13 @@ def test_affine_to_disp_translation():
     assert torch.allclose(disp, expected)
 
 
-def test_displacement_field_to_coords_zero_disp_2d():
+def test_disp_to_coords_zero_disp_2d():
     """
     Zero displacement on a 2x3 grid should produce the normalized mesh in range [-1, 1], flipped
     (col, row).
     """
     disp = torch.zeros(2, 3, 2, dtype=torch.float32)
-    coords = vxf.displacement_field_to_coords(disp)
+    coords = vxf.disp_to_coords(disp)
 
     # For shape=(2,3):
     #  row indices i \isin {0, 1} -> bounded on [-1, 1] with 2 elements -> [-1, 1]
