@@ -6,7 +6,7 @@ Example script to register two volumes with VoxelMorph models.
 Please make sure to use trained models appropriately. Let's say we have a model trained to register 
 a scan (moving) to an atlas (fixed). To register a scan to the atlas and save the warp field, run:
 
-    register.py --moving moving.nii.gz --fixed fixed.nii.gz --model model.pt 
+    register.py --moving moving.nii.gz --fixed fixed.nii.gz --model model.pt
         --moved moved.nii.gz --warp warp.nii.gz
 
 The source and target input images are expected to be affinely registered.

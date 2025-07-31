@@ -170,16 +170,16 @@ class IntegrateVelocityField(nn.Module):
     >>> shape = (128, 128)  # 2D spatial grid
     >>> integrator = IntegrateVelocityField(shape, steps=256)
     >>> velocity_field = torch.randn(1, 2, 128, 128)  # (B, C, H, W)
-    >>> displacement_field = integrator(velocity_field)
-    >>> displacement_field.shape
+    >>> disp = integrator(velocity_field)
+    >>> disp.shape
     torch.Size([1, 2, 128, 128])
 
     ### Perform integration on a 3D velocity field with a single scaling step:
     >>> shape = (64, 64, 64)  # 3D spatial grid
     >>> integrator = IntegrateVelocityField(shape, steps=1)
     >>> velocity_field = torch.randn(1, 3, 64, 64, 64)  # (B, C, D, H, W)
-    >>> displacement_field = integrator(velocity_field)
-    >>> displacement_field.shape
+    >>> disp = integrator(velocity_field)
+    >>> disp.shape
     torch.Size([1, 3, 64, 64, 64])
     """
 
@@ -259,9 +259,9 @@ class ResizeDisplacementField(nn.Module):
     -------
     ### Resize a 2D displacement field
     >>> resize_field = ResizeDisplacementField(scale_factor=2.0, interpolation_mode="bilinear")
-    >>> displacement_field = torch.rand(1, 2, 16, 16)  # Example displacement field in 2d
-    >>> resized_displacement_field = resize_field(displacement_field)
-    >>> print(resized_displacement_field.shape)  # Should be larger if scale_factor > 1
+    >>> disp = torch.rand(1, 2, 16, 16)  # Example displacement field in 2d
+    >>> resized_disp = resize_field(disp)
+    >>> print(resized_disp.shape)  # Should be larger if scale_factor > 1
     torch.Size([1, 2, 32, 32])
     """
 
@@ -291,13 +291,13 @@ class ResizeDisplacementField(nn.Module):
         self.align_corners = align_corners
         self.scale_factor = ne.samplers.Fixed.make(scale_factor)
 
-    def forward(self, displacement_field: torch.Tensor) -> torch.Tensor:
+    def forward(self, disp: torch.Tensor) -> torch.Tensor:
         """
         Instantiate the `ResizeDisplacementField` object.
 
         Parameters
         ----------
-        displacement_field : torch.Tensor
+        disp : torch.Tensor
             Vector field of shape (B, C, H, W) representing a displacement field, where C represents
             each spatial component of the vector field.
 
@@ -310,11 +310,11 @@ class ResizeDisplacementField(nn.Module):
         # Sample from the scaling sampler. If type Fixed, just get the fixed value!
         scale_factor = self.scale_factor()
 
-        resized_displacement_field = nnf.interpolate(
-            displacement_field * scale_factor,  # Scale the magnitudes of the displacement field
+        resized_disp = nnf.interpolate(
+            disp * scale_factor,  # Scale the magnitudes of the displacement field
             scale_factor=scale_factor,
             mode=self.interpolation_mode,
             align_corners=self.align_corners,
         )
 
-        return resized_displacement_field
+        return resized_disp
