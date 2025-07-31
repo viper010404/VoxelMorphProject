@@ -22,7 +22,7 @@ __all__ = [
     "gaussian_blur",
     "smooth_gaussian",
     "perlin",
-    "random_displacement_field",
+    "random_disp",
     "chance",
     "random_affine",
     "coords_to_displacement_field",
@@ -599,7 +599,7 @@ def perlin(
     return noise
 
 
-def random_displacement_field(
+def random_disp(
     shape: List[int],
     smoothing: Union[float, List[float]] = 10,
     magnitude: Union[float, List[float]] = 10,
@@ -784,7 +784,7 @@ def random_transform(
 
     # generate a nonlinear transform
     if chance(warp_probability):
-        disp = random_displacement_field(
+        disp = random_disp(
             shape=shape,
             smoothing=np.random.uniform(*warp_smoothing_range),
             magnitude=np.random.uniform(*warp_magnitude_range),
