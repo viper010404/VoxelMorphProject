@@ -11,7 +11,7 @@ from torch import Tensor
 import numpy as np
 
 __all__ = [
-    "affine_to_displacement_field",
+    "affine_to_disp",
     "grid_coordinates",
     "spatial_transform",
     "displacement_field_to_coords",
@@ -31,7 +31,7 @@ __all__ = [
 ]
 
 
-def affine_to_displacement_field(
+def affine_to_disp(
     affine: Tensor,
     meshgrid: Tensor,
     rotate_around_center: Optional[bool] = True
@@ -147,7 +147,7 @@ def spatial_transform(
             meshgrid = grid_coordinates(image.shape[1:], device=image.device)
 
         trf = torch.linalg.inv(trf)
-        trf = affine_to_displacement_field(
+        trf = affine_to_disp(
             trf,
             meshgrid,
             rotate_around_center=rotate_around_center
@@ -648,7 +648,7 @@ def chance(prob: float) -> bool:
     """
     if prob < 0.0 or prob > 1.0:
         raise ValueError(f'chance() expected a value in the range [0, 1], but got {prob}')
-    return np.random.rand() < prob
+    return frandom.rand() < prob
 
 
 def random_affine(
@@ -770,7 +770,7 @@ def random_transform(
 
         # convert max_translation from mm to voxel
         # the matrix returned from random_affine() is vox2vox rotating around the image center.
-        # it is used as target to source transformation in affine_to_displacement_field() to covert
+        # it is used as target to source transformation in affine_to_disp() to covert
         # the vox2vox matrix to dispacement field.
         max_translation = max_translation / voxsize
         matrix = random_affine(
@@ -780,7 +780,7 @@ def random_transform(
             max_scaling=max_scaling,
             device=device,
             sampling=sampling)
-        trf = affine_to_displacement_field(matrix, meshgrid)
+        trf = affine_to_disp(matrix, meshgrid)
 
     # generate a nonlinear transform
     if chance(warp_probability):

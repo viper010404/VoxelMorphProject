@@ -46,7 +46,7 @@ def test_grid_coordinates_3d():
     assert torch.allclose(grid[1, 1, 1], torch.tensor([1.0, 1.0, 1.0]))
 
 
-def test_affine_to_displacement_field_identity():
+def test_affine_to_disp_identity():
     """
     Identity affine should produce zero displacement everywhere.
     """
@@ -62,7 +62,7 @@ def test_affine_to_displacement_field_identity():
     )
 
     # Get displacement field
-    disp = vxf.affine_to_displacement_field(affine, grid)
+    disp = vxf.affine_to_disp(affine, grid)
 
     # output shape and dtype
     assert disp.shape == shape + (ndim,)
@@ -72,7 +72,7 @@ def test_affine_to_displacement_field_identity():
     assert torch.allclose(disp, torch.zeros_like(disp))
 
 
-def test_affine_to_displacement_field_translation():
+def test_affine_to_disp_translation():
     """
     Pure translation affine should yield a constant field = translation.
     """
@@ -91,7 +91,7 @@ def test_affine_to_displacement_field_translation():
     affine[1, -1] = ty
 
     # Get displacement field
-    disp = vxf.affine_to_displacement_field(affine, grid)
+    disp = vxf.affine_to_disp(affine, grid)
 
     # expected a field of shape (2,2,2) filled with [tx,ty]
     expected = torch.stack(
@@ -239,9 +239,11 @@ def test_resize_scale_nearest_int():
     """
     Nearest-neighbor upsampling of an integer image should replicate pixels.
     """
-    img = torch.tensor([[[1, 2],
-                         [3, 4]]],
-                       dtype=torch.int32)
+    img = torch.tensor(
+        [[[1, 2],
+        [3, 4]]],
+        dtype=torch.int32
+    )
     out = vxf.resize(img, scale_factor=2.0, nearest=True)
 
     # Expect each pixel to become a 2×2 block
