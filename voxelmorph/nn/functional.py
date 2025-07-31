@@ -15,7 +15,7 @@ __all__ = [
     "grid_coordinates",
     "spatial_transform",
     "disp_to_coords",
-    "integrate_displacement_field",
+    "integrate_disp",
     "angles_to_rotation_matrix",
     "compose_affine",
     "gaussian_kernel_1d",
@@ -216,7 +216,7 @@ def disp_to_coords(disp, meshgrid=None) -> Tensor:
     return coords
 
 
-def integrate_displacement_field(
+def integrate_disp(
     disp: Tensor,
     steps: int,
     meshgrid: Tensor = None
@@ -627,7 +627,7 @@ def random_displacement_field(
     disp = torch.stack(disp, dim=-1)
 
     if integrations > 0:
-        disp = integrate_displacement_field(disp, integrations, meshgrid)
+        disp = integrate_disp(disp, integrations, meshgrid)
 
     return disp
 
