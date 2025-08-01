@@ -43,7 +43,7 @@ def test_forward_output_shape(dummy_input_pair):
 
 def test_register_mode(dummy_input_pair):
     """
-    Test that forward pass with registration returns warped source and integrated flow field.
+    Test that forward pass with registration returns warped source and displacement field.
     """
 
     model = vxm.nn.models.VxmDeformable(
