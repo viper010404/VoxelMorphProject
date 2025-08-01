@@ -37,7 +37,7 @@ def affine_to_disp(
     rotate_around_center: Optional[bool] = True
 ) -> Tensor:
     """
-    Convert an affine transformation matrix to a dense displacement field.
+    Convert an affine transformation matrix to a displacement field.
 
     Parameters
     ----------
@@ -69,16 +69,16 @@ def affine_to_disp(
     ones = torch.ones((coords.shape[-2], 1), device=meshgrid.device)
     coords = torch.cat([coords, ones], dim=-1)
 
-    # apply the affine transformation to the coordinates to get the shift vector
+    # Apply the affine transformation to the coordinates to get the displacement field
     # affine needs to be vox2vox transformation matrix, and mapping from target to source
-    # the computed shift is the absolute crs in source space
-    shift = (affine @ coords.T)[:ndim].T
+    # the computed displacement field is the absolute crs in source space
+    disp = (affine @ coords.T)[:ndim].T
 
-    # reshape the shift vector to match the shape of the meshgrid and subtract
+    # Reshape the displacement field to match the shape of the meshgrid and subtract
     # the original meshgrid to get the displacement field
-    shift = shift.view(*shape, ndim) - grid
+    disp = disp.view(*shape, ndim) - grid
 
-    return shift
+    return disp
 
 
 def grid_coordinates(

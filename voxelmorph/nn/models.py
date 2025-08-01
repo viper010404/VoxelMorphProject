@@ -29,7 +29,7 @@ class VxmDeformable(nn.Module):
     in_channels : int
         Number of input channels in the source and target images.
     out_channels : int
-        Number of output channels in the flow field.
+        Number of output channels in the displacement field.
     *args : list
         Additional positional arguments for the `BasicUNet` constructor.
     nb_features : List[int], optional

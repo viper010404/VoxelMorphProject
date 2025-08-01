@@ -199,7 +199,7 @@ for epoch in range(args.initial_epoch, args.epochs):
         inputs = [torch.from_numpy(d).to(device).float().permute(0, 4, 1, 2, 3) for d in inputs]
         y_true = [torch.from_numpy(d).to(device).float().permute(0, 4, 1, 2, 3) for d in y_true]
 
-        # run inputs through the model to produce a warped image and flow field
+        # run inputs through the model to produce a warped image and displacement field
         y_pred = model(*inputs)
 
         # calculate total loss

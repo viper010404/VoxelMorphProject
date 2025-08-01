@@ -92,8 +92,9 @@ class SpatialTransformer(nn.Module):
         # Validate the dimensions of the input
         if moving_image.dim() < 4 or deformation_field.dim() != moving_image.dim():
             raise ValueError(
-                f"Expected `moving_image` to have at least 4 dimensions and for `flow field` to "
-                f"match `moving_image` dimensions, got moving_image.dim()={moving_image.dim()}, "
+                "Expected `moving_image` to have at least 4 dimensions and for "
+                "`deformation_field` to match `moving_image` dimensions, got "
+                f"moving_image.dim()={moving_image.dim()}, "
                 f"deformation_field.dim()={deformation_field.dim()}"
             )
 

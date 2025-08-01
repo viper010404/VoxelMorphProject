@@ -37,8 +37,8 @@ def test_forward_output_shape(dummy_input_pair):
     output = model(source, target)
 
     assert isinstance(output, list)
-    assert output[0].shape == source.shape  # warped source
-    assert output[1].shape[2:] == source.shape[2:]  # flow field
+    assert output[0].shape == source.shape  # Warped source
+    assert output[1].shape[2:] == source.shape[2:]  # Displacement field
 
 
 def test_register_mode(dummy_input_pair):
