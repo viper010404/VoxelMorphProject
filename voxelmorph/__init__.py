@@ -3,7 +3,10 @@ Deep learning tools for deformable medical image registration. This package
 offers reference implementations of core registration networks, loss
 functions, and utilities, with PyTorch and TensorFlow backends.
 
----
+## Subpackages (overview)
+
+- **nn**: Torch-based neural network components for Voxelmorph.
+- **py**: Python utilities for Voxelmorph.
 
 ???+ quote "Citation"
 
@@ -27,9 +30,6 @@ functions, and utilities, with PyTorch and TensorFlow backends.
         ```
 """
 
-# ---- voxelmorph ----
-# unsupervised learning for image registration
-
 # set version
 __version__ = '0.2'
 
@@ -46,3 +46,5 @@ if curv is None or version.parse(curv) < version.parse(minv):
 
 from . import nn
 from . import py
+
+__all__ = ['nn', 'py']
