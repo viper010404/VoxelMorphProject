@@ -1,3 +1,7 @@
+"""
+Data generators for medical image registration.
+"""
+
 # Standard library imports
 import os
 import glob
@@ -7,6 +11,17 @@ import numpy as np
 
 # Custom imports
 import voxelmorph as vxm
+
+__all__ = [
+    'volgen',
+    'scan_to_scan',
+    'scan_to_atlas',
+    'semisupervised',
+    'template_creation',
+    'conditional_template_creation',
+    'surf_semisupervised',
+    'synthmorph'
+]
 
 
 def volgen(
