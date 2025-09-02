@@ -1,9 +1,6 @@
 """
-Models for the voxelmorph project.
+Core VoxelMorph models for unsupervised and supervised learning.
 """
-__all__ = [
-    "VxmDeformable",
-]
 
 # Standard library imports
 from typing import List, Union, Callable, Tuple
@@ -15,6 +12,10 @@ import neurite as ne
 
 # Custom imports
 import voxelmorph as vxm
+
+__all__ = [
+    "VxmDeformable",
+]
 
 
 class VxmDeformable(nn.Module):
