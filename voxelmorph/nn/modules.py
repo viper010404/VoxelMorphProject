@@ -1,8 +1,6 @@
-__all__ = [
-    "SpatialTransformer",
-    "IntegrateVelocityField",
-    "ResizeDisplacementField",
-]
+"""
+Neural network building blocks for VoxelMorph.
+"""
 
 # Standard library imports
 from typing import Tuple, Union, Optional
@@ -14,6 +12,12 @@ import torch.nn.functional as nnf
 
 # Custom imports
 import neurite as ne
+
+__all__ = [
+    "SpatialTransformer",
+    "IntegrateVelocityField",
+    "ResizeDisplacementField",
+]
 
 
 class SpatialTransformer(nn.Module):
