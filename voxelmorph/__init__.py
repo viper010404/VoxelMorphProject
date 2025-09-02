@@ -1,3 +1,32 @@
+"""
+Deep learning tools for deformable medical image registration. This package
+offers reference implementations of core registration networks, loss
+functions, and utilities, with PyTorch and TensorFlow backends.
+
+---
+
+???+ quote "Citation"
+
+    === "APA"
+        Balakrishnan, G., Zhao, A., Sabuncu, M. R., Guttag, J., & Dalca,
+        A. V. (2018). VoxelMorph: A Learning Framework for Deformable
+        Medical Image Registration. *arXiv:1809.05231*.
+        <https://arxiv.org/abs/1809.05231>
+
+    === "BibTeX"
+        ```bibtex
+        @article{balakrishnan2018voxelmorph,
+          title   = {VoxelMorph: A Learning Framework for Deformable Medical
+                     Image Registration},
+          author  = {Balakrishnan, Guha and Zhao, Amy and Sabuncu, Mert R and
+                     Guttag, John and Dalca, Adrian V},
+          journal = {arXiv preprint arXiv:1809.05231},
+          year    = {2018},
+          url     = {https://arxiv.org/abs/1809.05231}
+        }
+        ```
+"""
+
 # ---- voxelmorph ----
 # unsupervised learning for image registration
 
