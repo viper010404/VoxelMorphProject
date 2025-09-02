@@ -1,5 +1,6 @@
 """
-Functional utilities written in pytorch for the `voxelmorph` project.
+Functions containing the core operations and logic of for image registration for `voxelmorph`
+written in PyTorch.
 """
 
 # Standard library imports
