@@ -27,8 +27,10 @@ class VxmDeformable(nn.Module):
     ----------
     ndim : int
         Number of spatial dimensions (e.g., 2 for 2D, 3 for 3D).
-    in_channels : int
-        Number of input channels in the source and target images.
+    source_channels : int
+        Number of channels in the source image.
+    target_channels : int
+        Number of channels in the target image.
     out_channels : int
         Number of output channels in the displacement field.
     *args : list
@@ -71,7 +73,8 @@ class VxmDeformable(nn.Module):
     def __init__(
         self,
         ndim: int,
-        in_channels: int,
+        source_channels: int,
+        target_channels: int,
         out_channels: int,
         nb_features: List[int] = (16, 16, 16, 16, 16),
         normalizations: Union[List[Union[Callable, str]], Callable, str, None] = None,
@@ -92,8 +95,10 @@ class VxmDeformable(nn.Module):
         ----------
         ndim : int
             Dimensionality of the input (1, 2, or 3).
-        in_channels : int
-            Number of input channels.
+        source_channels : int
+            Number of channels in the `source_tensor` input to the forward method of this class.
+        target_channels : int
+            Number of channels in the `target_tensor` input to the forward method of this class.
         out_channels : int
             Number of output channels.
         expected_moving_shape : tuple[int]
@@ -135,8 +140,10 @@ class VxmDeformable(nn.Module):
 
         # Set derived attrs
         self._init_flow_layer(ndim, out_channels, flow_initializer)
-        self.model = ne.models.BasicUNet(
-            ndim=ndim, in_channels=in_channels, out_channels=out_channels, nb_features=nb_features,
+        self.model = ne.nn.models.BasicUNet(
+            ndim=ndim, in_channels=(source_channels + target_channels),
+            out_channels=out_channels,
+            nb_features=nb_features,
             normalizations=normalizations, activations=activations, order=order,
             final_activation=final_activation
         )
@@ -256,7 +263,7 @@ class VxmDeformable(nn.Module):
         """
 
         # Initialize the conv ("flow") layer with congruent in and out features
-        flow_layer = ne.modules.ConvBlock(ndim, features, features).to(self.device)
+        flow_layer = ne.nn.modules.ConvBlock(ndim, features, features).to(self.device)
 
         # Optionally, apply custom initialization if `flow_initializer`` is provided
         if flow_initializer is not None:
