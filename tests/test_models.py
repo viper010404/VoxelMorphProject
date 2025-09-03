@@ -28,7 +28,8 @@ def test_forward_output_shape(dummy_input_pair):
 
     model = vxm.nn.models.VxmDeformable(
         ndim=3,
-        in_channels=2,
+        source_channels=1,
+        target_channels=1,
         out_channels=3,  # Spatial Transformer expects 3 output channels for the 3 spatial dims
         device="cpu"
     )
@@ -48,7 +49,8 @@ def test_register_mode(dummy_input_pair):
 
     model = vxm.nn.models.VxmDeformable(
         ndim=3,
-        in_channels=2,
+        source_channels=1,
+        target_channels=1,
         out_channels=3,
         device="cpu"
     )
@@ -67,7 +69,8 @@ def test_spatial_transformer_initialized(dummy_input_pair):
 
     model = vxm.nn.models.VxmDeformable(
         ndim=3,
-        in_channels=2,
+        source_channels=1,
+        target_channels=1,
         out_channels=3,
         device="cpu"
     )

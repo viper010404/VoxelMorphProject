@@ -12,6 +12,7 @@ import torch.nn.functional as nnf
 
 # Custom imports
 import neurite as ne
+import neurite.nn.functional as nef
 
 __all__ = [
     "SpatialTransformer",
@@ -68,7 +69,7 @@ class SpatialTransformer(nn.Module):
         # buffer (without saving to `state_dict`: persistent=False)
         self.register_buffer(
             name='identity_grid',
-            tensor=ne.utils.utils.grid(size=size, device=device),
+            tensor=nef.volshape_to_ndgrid(size=size, device=device),
             persistent=False  # Don't save to this module's state dict!
         )
 
