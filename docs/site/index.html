@@ -246,6 +246,19 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="." class="md-nav__link md-nav__link--active">
         
   
@@ -257,6 +270,34 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#voxelmorph--subpackages" class="md-nav__link">
+    <span class="md-ellipsis">
+      Subpackages
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -603,6 +644,23 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#voxelmorph--subpackages" class="md-nav__link">
+    <span class="md-ellipsis">
+      Subpackages
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -629,7 +687,67 @@
 
     <div class="doc doc-contents first">
 
-        <p>Voxelmorph: unsupervised learning for image registration</p>
+        <p>Deep learning tools for deformable medical image registration. This package
+offers reference implementations of core registration networks, loss
+functions, and utilities, with PyTorch and TensorFlow backends.</p>
+<h2 id="voxelmorph--subpackages">Subpackages</h2>
+
+
+<table>
+      <thead>
+        <tr>
+          <th><span class="doc-section-title">MODULE</span></th>
+          <th><span>DESCRIPTION</span></th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td><code><a class="autorefs autorefs-internal" title="voxelmorph.nn" href="api/nn/nn/#voxelmorph.nn">nn</a></code></td>
+            <td class="doc-module-details">
+              <div class="doc-md-description">
+                <p>Torch-based neural network components for VoxelMorph.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><a class="autorefs autorefs-internal" title="voxelmorph.py" href="api/py/py/#voxelmorph.py">py</a></code></td>
+            <td class="doc-module-details">
+              <div class="doc-md-description">
+                <p>Python utilities for VoxelMorph.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="voxelmorph.???+ quote "Citation"">???+ quote &#34;Citation&#34;</span></code></td>
+            <td class="doc-module-details">
+              <div class="doc-md-description">
+                <div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="voxelmorph--apa" name="voxelmorph--__tabbed_1" type="radio" /><input id="voxelmorph--bibtex" name="voxelmorph--__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="voxelmorph--apa">APA</label><label for="voxelmorph--bibtex">BibTeX</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p>Balakrishnan, G., Zhao, A., Sabuncu, M. R., Guttag, J., &amp; Dalca,
+A. V. (2018). VoxelMorph: A Learning Framework for Deformable
+Medical Image Registration. <em>arXiv:1809.05231</em>.
+<a href="https://arxiv.org/abs/1809.05231">https://arxiv.org/abs/1809.05231</a></p>
+</div>
+<div class="tabbed-block">
+<div class="language-bibtex highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nc">@article</span><span class="p">{</span><span class="nl">balakrishnan2018voxelmorph</span><span class="p">,</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="na">title</span><span class="w">   </span><span class="p">=</span><span class="w"> </span><span class="s">{VoxelMorph: A Learning Framework for Deformable Medical</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="s">             Image Registration}</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="na">author</span><span class="w">  </span><span class="p">=</span><span class="w"> </span><span class="s">{Balakrishnan, Guha and Zhao, Amy and Sabuncu, Mert R and</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="s">             Guttag, John and Dalca, Adrian V}</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="na">journal</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">{arXiv preprint arXiv:1809.05231}</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="na">year</span><span class="w">    </span><span class="p">=</span><span class="w"> </span><span class="s">{2018}</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="na">url</span><span class="w">     </span><span class="p">=</span><span class="w"> </span><span class="s">{https://arxiv.org/abs/1809.05231}</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">}</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
 
 
 
