@@ -2,6 +2,8 @@
 
 **VoxelMorph** is a general purpose library for learning-based tools for alignment/registration, and more generally modelling with deformations.
 
+> ⚠️ **Warning**: VoxelMorph is under active development. We are in the process of finalizing the structure for PyTorch -- interfaces may change.
+
 # Tutorial
 
 We have several VoxelMorph tutorials:
