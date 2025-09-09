@@ -272,14 +272,18 @@ class VxmDeformable(nn.Module):
             flow_initializer = ne.samplers.Fixed.make(flow_initializer)
 
             # Sample the weight parameters from the distribution for first (and only) conv
-            flow_layer.conv0.weight = nn.Parameter(
-                flow_initializer(flow_layer.conv0.weight.shape)
-            ).to(self.device)
+            with torch.no_grad():
+                flow_layer.conv0.weight.copy_(
+                    flow_initializer(flow_layer.conv0.weight.shape)
+                    .to(flow_layer.conv0.weight.device)
+                )
+                if flow_layer.conv0.bias is not None:
+                    flow_layer.conv0.bias.zero_()
 
             # Set the bias term(s) to zero for the first (and only) conv
-            flow_layer.conv0.bias = nn.Parameter(
-                torch.zeros(flow_layer.conv0.bias.shape)
-            ).to(self.device)
+            if flow_layer.conv0.bias is not None:
+                with torch.no_grad():
+                    flow_layer.conv0.bias.zero_()
 
         # Register the flow layer as a submodule
         self.add_module("flow_layer", flow_layer)
