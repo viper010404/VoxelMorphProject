@@ -75,7 +75,6 @@ class VxmDeformable(nn.Module):
         ndim: int,
         source_channels: int,
         target_channels: int,
-        out_channels: int,
         nb_features: List[int] = (16, 16, 16, 16, 16),
         normalizations: Union[List[Union[Callable, str]], Callable, str, None] = None,
         activations: Union[List[Union[Callable, str]], Callable, str, None] = nn.ReLU,
@@ -99,8 +98,6 @@ class VxmDeformable(nn.Module):
             Number of channels in the `source_tensor` input to the forward method of this class.
         target_channels : int
             Number of channels in the `target_tensor` input to the forward method of this class.
-        out_channels : int
-            Number of output channels.
         expected_moving_shape : tuple[int]
             The expected shape of the `moving_tensor` input to the forward method of this class.
             without batch or channel dimensions. Used to initialize the `VecInt` integrator.
@@ -137,12 +134,13 @@ class VxmDeformable(nn.Module):
         self.bidirectional_cost = bidirectional_cost
         self.resize_integrated_fields = resize_integrated_fields
         self.device = device
+        self.out_channels = ndim
 
         # Set derived attrs
-        self._init_flow_layer(ndim, out_channels, flow_initializer)
+        self._init_flow_layer(ndim, self.out_channels, flow_initializer)
         self.model = ne.nn.models.BasicUNet(
             ndim=ndim, in_channels=(source_channels + target_channels),
-            out_channels=out_channels,
+            out_channels=self.out_channels,
             nb_features=nb_features,
             normalizations=normalizations, activations=activations, order=order,
             final_activation=final_activation
