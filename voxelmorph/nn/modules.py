@@ -73,6 +73,13 @@ class SpatialTransformer(nn.Module):
             persistent=False  # Don't save to this module's state dict!
         )
 
+        # Ensure the identity grid's last axis is always [X, Y, (Z, ...)] order,
+        # matching PyTorch grid_sample's convention for all spatial dimensions.
+        self.identity_grid = self.identity_grid.index_select(
+            -1,
+            torch.arange(self.identity_grid.shape[-1] - 1, -1, -1, device=self.identity_grid.device)
+        )
+
     def forward(
         self,
         moving_image: torch.Tensor,
