@@ -14,11 +14,10 @@ import neurite as ne
 import voxelmorph as vxm
 
 __all__ = [
-    "VxmDeformable",
+    "VxmPairwise",
 ]
 
-
-class VxmDeformable(nn.Module):
+class VxmPairwise(nn.Module):
     """
     A network archetecture built on `BasicUNet` to perform nD image registration using a flow
     field.
@@ -88,7 +87,7 @@ class VxmDeformable(nn.Module):
     ):
 
         """
-        Initialize the `VxmDeformable`.
+        Initialize the `VxmPairwise`.
 
         Parameters
         ----------
@@ -153,7 +152,7 @@ class VxmDeformable(nn.Module):
         register: bool = False
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
-        Forward pass of `VxmDeformable`.
+        Forward pass of `VxmPairwise`.
 
         The forward pass concatenates the `source` and `target` images, passes them through the
         `BasicUNet` backbone, applies a flow layer to obtain the flow (velocity) field, then warps
@@ -278,7 +277,6 @@ class VxmDeformable(nn.Module):
                 # Set the bias term(s) to zero for the first (and only) conv
                 if flow_layer.conv0.bias is not None:
                     flow_layer.conv0.bias.zero_()
-                    
         # Register the flow layer as a submodule
         self.add_module("flow_layer", flow_layer)
 
