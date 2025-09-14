@@ -649,7 +649,7 @@ def chance(prob: float) -> bool:
     """
     if prob < 0.0 or prob > 1.0:
         raise ValueError(f'chance() expected a value in the range [0, 1], but got {prob}')
-    return frandom.rand() < prob
+    return np.random.rand() < prob
 
 
 def random_affine(
