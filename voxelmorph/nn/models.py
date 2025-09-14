@@ -17,9 +17,10 @@ __all__ = [
     "VxmPairwise",
 ]
 
+
 class VxmPairwise(nn.Module):
     """
-    A network archetecture built on `BasicUNet` to perform nD image registration using a flow
+    A network architecture built on `BasicUNet` to perform nD image registration using a flow
     field.
 
     Parameters
@@ -128,7 +129,7 @@ class VxmPairwise(nn.Module):
         # Initialize the Module
         super().__init__()
 
-        # Set cnnstant attrs
+        # Set constant attrs
         self.integration_steps = integration_steps
         self.bidirectional_cost = bidirectional_cost
         self.resize_integrated_fields = resize_integrated_fields
