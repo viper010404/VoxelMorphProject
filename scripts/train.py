@@ -104,12 +104,12 @@ if args.atlas:
     # scan-to-atlas generator
     atlas = vxm.py.utils.load_volfile(args.atlas, np_var='vol',
                                       add_batch_axis=True, add_feat_axis=add_feat_axis)
-    generator = vxm.generators.scan_to_atlas(train_files, atlas,
-                                             batch_size=args.batch_size, bidir=args.bidir,
-                                             add_feat_axis=add_feat_axis)
+    generator = vxm.py.generators.scan_to_atlas(train_files, atlas,
+                                                batch_size=args.batch_size, bidir=args.bidir,
+                                                add_feat_axis=add_feat_axis)
 else:
     # scan-to-scan generator
-    generator = vxm.generators.scan_to_scan(
+    generator = vxm.py.generators.scan_to_scan(
         train_files, batch_size=args.batch_size, bidir=args.bidir, add_feat_axis=add_feat_axis)
 
 # extract shape from sampled input
@@ -136,15 +136,17 @@ dec_nf = args.dec if args.dec else [32, 32, 32, 32, 32, 16, 16]
 
 if args.load_model:
     # load initial model (if specified)
-    model = vxm.networks.VxmDense.load(args.load_model, device)
+    model = torch.load(args.load_model, map_location=device)
 else:
     # otherwise configure new model
-    model = vxm.networks.VxmDense(
-        inshape=inshape,
-        nb_unet_features=[enc_nf, dec_nf],
-        bidir=bidir,
-        int_steps=args.int_steps,
-        int_downsize=args.int_downsize
+    model = vxm.nn.models.VxmPairwise(
+        ndim=len(inshape),
+        source_channels=1,  # Assuming single channel
+        target_channels=1,  # Assuming single channel
+        nb_features=enc_nf + dec_nf,
+        integration_steps=args.int_steps,
+        bidirectional_cost=bidir,
+        device=device
     )
 
 if nb_gpus > 1:
@@ -161,9 +163,9 @@ optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 # prepare image loss
 if args.image_loss == 'ncc':
-    image_loss_func = vxm.losses.NCC().loss
+    image_loss_func = vxm.nn.losses.NCC().loss
 elif args.image_loss == 'mse':
-    image_loss_func = vxm.losses.MSE().loss
+    image_loss_func = vxm.nn.losses.MSE().loss
 else:
     raise ValueError('Image loss should be "mse" or "ncc", but found "%s"' % args.image_loss)
 
@@ -176,7 +178,7 @@ else:
     weights = [1]
 
 # prepare deformation loss
-losses += [vxm.losses.Grad('l2', loss_mult=args.int_downsize).loss]
+losses += [vxm.nn.losses.Grad('l2', loss_mult=args.int_downsize).loss]
 weights += [args.weight]
 
 # training loops
