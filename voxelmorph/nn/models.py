@@ -2,7 +2,7 @@
 Core VoxelMorph models for unsupervised and supervised learning.
 """
 
-# Standard library imports
+# Core library imports
 from typing import List, Union, Callable, Tuple
 
 # Third-party imports
@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import neurite as ne
 
-# Custom imports
+# Local imports
 import voxelmorph as vxm
 
 __all__ = [
@@ -150,39 +150,34 @@ class VxmPairwise(nn.Module):
         self,
         source: torch.Tensor,
         target: torch.Tensor,
-        register: bool = False
+        return_warped: bool = False,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Forward pass of `VxmPairwise`.
 
-        The forward pass concatenates the `source` and `target` images, passes them through the
-        `BasicUNet` backbone, applies a flow layer to obtain the flow (velocity) field, then warps
-        the images according to the `register` argument.
+        This forward pass concatenates the `source` and `target` images, processes them with a
+        `BasicUNet` backbone, and uses a flow layer to predict a velocity field (source -> target).
+
+        By default, this method returns only the predicted velocity field. If `return_warped=True`,
+        it will also return the source image warped by the positive displacement field. The
+        displacement field is obtained by integrating the velocity field when
+        `integration_steps > 0`; otherwise, the velocity field is used directly as the
+        displacement for warping.
 
         Parameters
         ----------
         source : torch.Tensor
-            2D or 3D Source image tensor with batch and channel dimensions to be registered/warped
-            to the target image.
+            Source image tensor with batch and channel dimensions.
         target : torch.Tensor
-            Image to which `source` is registered/warped. Same shape as `source`.
-        register : bool, optional
-            If `True`, returns the registered source image along with the predicted positive flow
-            field.
+            Target image tensor. Must have the same shape as `source`.
+        return_warped : bool, optional
+            If `True`, also return the warped source image. Default is `False`.
 
         Returns
         -------
-        torch.Tensor or Tuple[torch.Tensor, torch.Tensor]
-            - If `register=True`, returns a tuple of
-                - `warped_source`
-                - `pos_flow`
-            - If `register=False` and `bidirectional_cost=False`, returns a tuple of:
-                - `warped_source`
-                - `preintegrated_flow`
-            - If `register=False` and `bidirectional_cost=True`, returns a tuple of:
-                - `warped_source`
-                - `preintegrated_flow`
-                - `warped_target`
+        Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
+            - If `return_warped=False`: `velocity` (Tensor)
+            - If `return_warped=True`: (`velocity`, `warped_source`)
         """
 
         if not hasattr(self, 'flow_layer'):
@@ -197,42 +192,24 @@ class VxmPairwise(nn.Module):
         # Pass combined features through the model's backbone
         combined_features = self.model(combined_features)
 
-        # Apply flow layer to get the positive flow field `pos_flow`
-        pos_flow = self.flow_layer(combined_features)
+        # Predict the positive velocity field (source -> target)
+        velocity = self.flow_layer(combined_features)
 
-        # Keep a copy of the flow before it's integrated
-        preintegrated_flow = torch.clone(pos_flow)
+        if not return_warped:
+            return velocity
 
-        # For bidirectional cost mode, prepare negative flow (target->source)
-        neg_flow = -pos_flow if self.bidirectional_cost else None
+        # If a warped image is requested, produce a displacement field for warping
+        displacement = velocity.clone()
 
-        # Optionally integrate
         if self.integration_steps > 0:
-            pos_flow, neg_flow = self._integrate_velocity_fields(pos_flow, neg_flow)
+            # Provide negative velocity only when bidirectional cost is desired
+            neg_velocity = -velocity if self.bidirectional_cost else None
+            displacement, _ = self._integrate_velocity_fields(velocity, neg_velocity)
 
-        # Perform the warping operations for the source and target
-        warped_source = self._spatial_transform(source, pos_flow)
+        # Warp the source image with the displacement field
+        warped_source = self._spatial_transform(source, displacement)
 
-        # Warp the target image using the negative flow if needed
-        warped_target = self._spatial_transform(
-            target, neg_flow
-        ) if self.bidirectional_cost else None
-
-        # Prepare the output based on the 'register' flag and cost mode
-        output_list = [warped_source]
-
-        if register:
-            # output_list: [warped_source, pos_flow]
-            output_list.append(pos_flow)
-
-        else:
-            # output_list: [warped_source, preintegrated_flow]
-            output_list.append(preintegrated_flow)
-            if self.bidirectional_cost:
-                # output_list: [warped_source, preintegrated_flow, warped_target]
-                output_list.append(warped_target)
-
-        return output_list
+        return velocity, warped_source
 
     def _init_flow_layer(
         self,
