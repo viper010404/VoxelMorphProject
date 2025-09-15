@@ -23,6 +23,7 @@ authors = [
 dependencies = [
   "torch",
   "scikit-image",
+  'neurite @ git+https://github.com/adalca/neurite.git@dev',
 ]
 keywords = [
   "python",

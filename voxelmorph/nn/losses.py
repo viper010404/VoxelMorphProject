@@ -39,8 +39,8 @@ class NCC:
         # set window size
         win = [9] * ndims if self.win is None else self.win
 
-        # compute filters
-        sum_filt = torch.ones([1, 1, *win]).to("cuda")
+        # compute filters - use the same device as input tensors
+        sum_filt = torch.ones([1, 1, *win], device=Ii.device, dtype=Ii.dtype)
 
         pad_no = math.floor(win[0] / 2)
 

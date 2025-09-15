@@ -26,7 +26,7 @@ def test_forward_output_shape(dummy_input_pair):
     the bidirectional cost.
     """
 
-    model = vxm.nn.models.VxmDeformable(
+    model = vxm.nn.models.VxmPairwise(
         ndim=3,
         source_channels=1,
         target_channels=1,
@@ -46,7 +46,7 @@ def test_register_mode(dummy_input_pair):
     Test that forward pass with registration returns warped source and displacement field.
     """
 
-    model = vxm.nn.models.VxmDeformable(
+    model = vxm.nn.models.VxmPairwise(
         ndim=3,
         source_channels=1,
         target_channels=1,
@@ -65,7 +65,7 @@ def test_spatial_transformer_initialized(dummy_input_pair):
     Test that the spatial transformer module is lazily initialized.
     """
 
-    model = vxm.nn.models.VxmDeformable(
+    model = vxm.nn.models.VxmPairwise(
         ndim=3,
         source_channels=1,
         target_channels=1,
