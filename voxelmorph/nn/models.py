@@ -186,20 +186,16 @@ class VxmPairwise(nn.Module):
                 "is passed during initialization or load a trained model from a checkpoint."
             )
 
-        # Concat the source and target along channel dimension
+        # Pass combined features through the model's backbone & flow layer
         combined_features = torch.cat([source, target], dim=1)
-
-        # Pass combined features through the model's backbone
         combined_features = self.model(combined_features)
-
-        # Predict the positive velocity field (source -> target)
-        velocity = self.flow_layer(combined_features)
+        velocity = self.flow_layer(combined_features)   # Positive velocity: (source -> target)
 
         if not return_warped:
             return velocity
 
         # If a warped image is requested, produce a displacement field for warping
-        displacement = velocity.clone()
+        displacement = velocity
 
         if self.integration_steps > 0:
             # Provide negative velocity only when bidirectional cost is desired
