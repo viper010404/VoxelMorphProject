@@ -304,7 +304,7 @@ def compose_affine(
     ndim (int):
         The number of dimensions of the affine matrix. Must be 2 or 3.
     translation : Tensor, optional
-        The translation vector. Must be a vector of size `ndim`. 
+        The translation vector. Must be a vector of size `ndim`.
     rotation : Tensor, optional
         The rotation angles. Must be a scalar value for 2D affine matrices,
         and a tensor of size 3 for 3D affine matrices.

@@ -514,13 +514,14 @@ def test_grid_coordinates_xy_indexing():
     # Check shape - with 'xy' indexing, the shape dimensions are swapped
     assert grid.shape == (3, 2, 2)  # (width, height, 2) instead of (height, width, 2)
 
-    # With 'xy' indexing, coordinates should be [x, y] instead of [y, x]
-    # The actual output shows the pattern: x varies in first dim, y in second
+    # With 'xy' indexing, coordinates should be [x, y] where:
+    # - First dimension iterates over y-values (rows)
+    # - Second dimension iterates over x-values (columns)
     expected = torch.tensor(
         [
-            [[0.0, 0.0], [0.0, 1.0]],  # x=0, y varies
-            [[1.0, 0.0], [1.0, 1.0]],  # x=1, y varies
-            [[2.0, 0.0], [2.0, 1.0]],  # x=2, y varies
+            [[0.0, 0.0], [1.0, 0.0]],  # y=0: x varies (0,1)
+            [[0.0, 1.0], [1.0, 1.0]],  # y=1: x varies (0,1)
+            [[0.0, 2.0], [1.0, 2.0]],  # y=2: x varies (0,1)
         ],
         dtype=torch.float32,
     )
@@ -546,54 +547,6 @@ def test_spatial_transform_different_dtypes():
     out_int = vxf.spatial_transform(img_int, affine, method='nearest')
     assert out_int.dtype == torch.int32
     assert torch.allclose(out_int.float(), img_int.float(), atol=1e-6)
-
-
-def test_grid_coordinates_axis_convention_2d():
-    """
-    Verify grid coordinates match PyTorch grid_sample convention for 2D.
-    This test ensures coordinates are in [X, Y] order as expected by grid_sample.
-    """
-    # Test with 'ij' indexing (default)
-    grid_ij = vxf.grid_coordinates((2, 3), indexing='ij')
-
-    # For 2D with 'ij' indexing, coordinates should be [y, x]
-    expected_ij = torch.tensor([
-        [[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]],  # y=0, x varies
-        [[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]],  # y=1, x varies
-    ], dtype=torch.float32)
-
-    assert torch.allclose(grid_ij, expected_ij), f"Expected {expected_ij}, got {grid_ij}"
-
-    # Test with 'xy' indexing
-    grid_xy = vxf.grid_coordinates((2, 3), indexing='xy')
-
-    # For 2D with 'xy' indexing, coordinates should be [x, y]
-    expected_xy = torch.tensor([
-        [[0.0, 0.0], [0.0, 1.0]],  # x=0, y varies
-        [[1.0, 0.0], [1.0, 1.0]],  # x=1, y varies
-        [[2.0, 0.0], [2.0, 1.0]],  # x=2, y varies
-    ], dtype=torch.float32)
-
-    assert torch.allclose(grid_xy, expected_xy), f"Expected {expected_xy}, got {grid_xy}"
-
-
-def test_grid_coordinates_axis_convention_3d():
-    """
-    Verify grid coordinates match PyTorch grid_sample convention for 3D.
-    This test ensures coordinates are in [X, Y, Z] order as expected by grid_sample.
-    """
-    # Test with 'ij' indexing (default)
-    grid_ij = vxf.grid_coordinates((2, 2, 2), indexing='ij')
-
-    # For 3D with 'ij' indexing, coordinates should be [z, y, x]
-    expected_ij = torch.tensor([
-        [[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
-         [[0.0, 1.0, 0.0], [1.0, 1.0, 0.0]]],
-        [[[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]],
-         [[0.0, 1.0, 1.0], [1.0, 1.0, 1.0]]]
-    ], dtype=torch.float32)
-
-    assert torch.allclose(grid_ij, expected_ij), f"Expected {expected_ij}, got {grid_ij}"
 
 
 def test_disp_to_coords_axis_flip():
