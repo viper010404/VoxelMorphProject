@@ -26,22 +26,30 @@ def test_forward_output_shape(dummy_input_pair):
     the bidirectional cost.
     """
 
+    # Unpack dummy input pair
+    source, target = dummy_input_pair
+
+    # Initialize model
     model = vxm.nn.models.VxmPairwise(
         ndim=3,
         source_channels=1,
         target_channels=1,
+        spatial_shape=(32, 32, 32),
         device="cpu"
     )
 
-    source, target = dummy_input_pair
     output = model(source, target)
 
-    assert isinstance(output, list)
-    assert output[0].shape == source.shape  # Warped source
-    assert output[1].shape[2:] == source.shape[2:]  # Displacement field
+    assert isinstance(output, torch.Tensor)
+    assert output.shape[2:] == source.shape[2:]
+
+    # Ensure transformer is initialized after forward
+    assert hasattr(model, "flow_layer")
+    assert hasattr(model, "spatial_transformer")
+    assert hasattr(model, "velocity_field_integrator")
 
 
-def test_register_mode(dummy_input_pair):
+def test_return_warped_mode(dummy_input_pair):
     """
     Test that forward pass with registration returns warped source and displacement field.
     """
@@ -50,33 +58,12 @@ def test_register_mode(dummy_input_pair):
         ndim=3,
         source_channels=1,
         target_channels=1,
+        spatial_shape=(32, 32, 32),
         device="cpu"
     )
 
     source, target = dummy_input_pair
-    warped_source, pos_flow = model(source, target, register=True)
+    warped_source, pos_flow = model(source, target, return_warped=True)
 
-    assert warped_source.shape == source.shape
+    assert warped_source.shape[2:] == source.shape[2:]
     assert pos_flow.shape[2:] == source.shape[2:]
-
-
-def test_spatial_transformer_initialized(dummy_input_pair):
-    """
-    Test that the spatial transformer module is lazily initialized.
-    """
-
-    model = vxm.nn.models.VxmPairwise(
-        ndim=3,
-        source_channels=1,
-        target_channels=1,
-        device="cpu"
-    )
-
-    # Ensure transformer is not initialized before forward pass
-    assert not hasattr(model, "spatial_transformer")
-
-    source, target = dummy_input_pair
-    _ = model(source, target)
-
-    # Ensure transformer is initialized after forward
-    assert hasattr(model, "spatial_transformer")

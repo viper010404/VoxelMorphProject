@@ -31,6 +31,9 @@ class VxmPairwise(nn.Module):
         Number of channels in the source image.
     target_channels : int
         Number of channels in the target image.
+    spatial_shape : tuple[int]
+        The expected shape of the `moving_tensor` input to the forward method of this class.
+        without batch or channel dimensions. Used to initialize the `VecInt` integrator.
     out_channels : int
         Number of output channels in the displacement field.
     *args : list
@@ -75,6 +78,7 @@ class VxmPairwise(nn.Module):
         ndim: int,
         source_channels: int,
         target_channels: int,
+        spatial_shape: Tuple[int, ...],
         nb_features: List[int] = (16, 16, 16, 16, 16),
         normalizations: Union[List[Union[Callable, str]], Callable, str, None] = None,
         activations: Union[List[Union[Callable, str]], Callable, str, None] = nn.ReLU,
@@ -98,7 +102,7 @@ class VxmPairwise(nn.Module):
             Number of channels in the `source_tensor` input to the forward method of this class.
         target_channels : int
             Number of channels in the `target_tensor` input to the forward method of this class.
-        expected_moving_shape : tuple[int]
+        spatial_shape : tuple[int]
             The expected shape of the `moving_tensor` input to the forward method of this class.
             without batch or channel dimensions. Used to initialize the `VecInt` integrator.
         nb_features : List[int]
@@ -134,6 +138,7 @@ class VxmPairwise(nn.Module):
         self.bidirectional_cost = bidirectional_cost
         self.resize_integrated_fields = resize_integrated_fields
         self.device = device
+        self.spatial_shape = spatial_shape
         self.out_channels = ndim
 
         # Set derived attrs
@@ -144,6 +149,16 @@ class VxmPairwise(nn.Module):
             nb_features=nb_features,
             normalizations=normalizations, activations=activations, order=order,
             final_activation=final_activation
+        )
+
+        # Initialize the velocity field integrator with spatial shape
+        self.velocity_field_integrator = vxm.nn.modules.IntegrateVelocityField(
+            shape=self.spatial_shape[2:], steps=self.integration_steps, device=self.device
+        )
+
+        # Initialize the spatial transformer with spatial shape
+        self.spatial_transformer = vxm.nn.modules.SpatialTransformer(
+            size=self.spatial_shape[2:], device=self.device
         )
 
     def forward(
@@ -179,13 +194,6 @@ class VxmPairwise(nn.Module):
             - If `return_warped=False`: `velocity` (Tensor)
             - If `return_warped=True`: (`velocity`, `warped_source`)
         """
-
-        if not hasattr(self, 'flow_layer'):
-            raise RuntimeError(
-                "The `flow_layer` is not initialized. Ensure a valid `flow_initializer` "
-                "is passed during initialization or load a trained model from a checkpoint."
-            )
-
         # Pass combined features through the model's backbone & flow layer
         combined_features = torch.cat([source, target], dim=1)
         combined_features = self.model(combined_features)
@@ -213,7 +221,6 @@ class VxmPairwise(nn.Module):
         features: int,
         flow_initializer: Union[float, ne.samplers.Sampler] = ne.samplers.Normal(0, 1e-5)
     ):
-
         """
         Initialize the flow layer with custom weight initialization (by sampling
         `flow_initializer`).
@@ -279,18 +286,6 @@ class VxmPairwise(nn.Module):
         torch.Tensor
             Displacement field obtained by integrating the velocity field via scaling and squaring.
         """
-
-        # If the velocity integrator is not defined, dynamically construct it
-        if not hasattr(self, "velocity_field_integrator"):
-
-            # Dynamically construct the integrator based on the spatial shape
-            velocity_field_integrator = vxm.nn.modules.IntegrateVelocityField(
-                shape=pos_flow.shape[2:], steps=self.integration_steps, device=self.device
-            )
-
-            # Add it to the module
-            self.add_module("velocity_field_integrator", velocity_field_integrator)
-
         # Integrate the positive flow
         pos_flow = self.velocity_field_integrator(pos_flow)
 
@@ -325,16 +320,6 @@ class VxmPairwise(nn.Module):
         torch.Tensor
             The warped image tensor.
         """
-
-        if not hasattr(self, "spatial_transformer"):
-            # Dynamically construct the spatial transformer with the correct spatial shape
-            spatial_transformer = vxm.nn.modules.SpatialTransformer(
-                size=moving_image.shape[2:], device=self.device
-            )
-
-            # Register it as a submodule
-            self.add_module("spatial_transformer", spatial_transformer)
-
         # Warp the moving image with the deformation field
         warped_image = self.spatial_transformer(moving_image, deformation_field)
 
