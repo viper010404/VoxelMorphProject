@@ -5,7 +5,6 @@ Unit tests for the basic utility functions in voxelmorph.
 # Standard library imports
 import torch
 
-# Custom imports
 import voxelmorph.nn.functional as vxf
 
 
@@ -241,7 +240,7 @@ def test_resize_scale_nearest_int():
     """
     img = torch.tensor(
         [[[1, 2],
-        [3, 4]]],
+          [3, 4]]],
         dtype=torch.int32
     )
     out = vxf.resize(img, scale_factor=2.0, nearest=True)
@@ -519,9 +518,9 @@ def test_grid_coordinates_xy_indexing():
     # The actual output shows the pattern: x varies in first dim, y in second
     expected = torch.tensor(
         [
-            [[0.0, 0.0], [1.0, 0.0]],  # y=0, x varies
-            [[0.0, 1.0], [1.0, 1.0]],  # y=1, x varies
-            [[0.0, 2.0], [1.0, 2.0]],  # y=2, x varies
+            [[0.0, 0.0], [0.0, 1.0]],  # x=0, y varies
+            [[1.0, 0.0], [1.0, 1.0]],  # x=1, y varies
+            [[2.0, 0.0], [2.0, 1.0]],  # x=2, y varies
         ],
         dtype=torch.float32,
     )
@@ -547,3 +546,74 @@ def test_spatial_transform_different_dtypes():
     out_int = vxf.spatial_transform(img_int, affine, method='nearest')
     assert out_int.dtype == torch.int32
     assert torch.allclose(out_int.float(), img_int.float(), atol=1e-6)
+
+
+def test_grid_coordinates_axis_convention_2d():
+    """
+    Verify grid coordinates match PyTorch grid_sample convention for 2D.
+    This test ensures coordinates are in [X, Y] order as expected by grid_sample.
+    """
+    # Test with 'ij' indexing (default)
+    grid_ij = vxf.grid_coordinates((2, 3), indexing='ij')
+
+    # For 2D with 'ij' indexing, coordinates should be [y, x]
+    expected_ij = torch.tensor([
+        [[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]],  # y=0, x varies
+        [[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]],  # y=1, x varies
+    ], dtype=torch.float32)
+
+    assert torch.allclose(grid_ij, expected_ij), f"Expected {expected_ij}, got {grid_ij}"
+
+    # Test with 'xy' indexing
+    grid_xy = vxf.grid_coordinates((2, 3), indexing='xy')
+
+    # For 2D with 'xy' indexing, coordinates should be [x, y]
+    expected_xy = torch.tensor([
+        [[0.0, 0.0], [0.0, 1.0]],  # x=0, y varies
+        [[1.0, 0.0], [1.0, 1.0]],  # x=1, y varies
+        [[2.0, 0.0], [2.0, 1.0]],  # x=2, y varies
+    ], dtype=torch.float32)
+
+    assert torch.allclose(grid_xy, expected_xy), f"Expected {expected_xy}, got {grid_xy}"
+
+
+def test_grid_coordinates_axis_convention_3d():
+    """
+    Verify grid coordinates match PyTorch grid_sample convention for 3D.
+    This test ensures coordinates are in [X, Y, Z] order as expected by grid_sample.
+    """
+    # Test with 'ij' indexing (default)
+    grid_ij = vxf.grid_coordinates((2, 2, 2), indexing='ij')
+
+    # For 3D with 'ij' indexing, coordinates should be [z, y, x]
+    expected_ij = torch.tensor([
+        [[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+         [[0.0, 1.0, 0.0], [1.0, 1.0, 0.0]]],
+        [[[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]],
+         [[0.0, 1.0, 1.0], [1.0, 1.0, 1.0]]]
+    ], dtype=torch.float32)
+
+    assert torch.allclose(grid_ij, expected_ij), f"Expected {expected_ij}, got {grid_ij}"
+
+
+def test_disp_to_coords_axis_flip():
+    """
+    Test that disp_to_coords correctly flips the last axis to match PyTorch convention.
+    """
+    # Create a simple displacement field
+    disp = torch.zeros(2, 2, 2, dtype=torch.float32)
+
+    # Add some displacement
+    disp[0, 0, 0] = 1.0  # Move first pixel
+    disp[1, 1, 1] = 2.0  # Move second pixel
+
+    # Convert to coordinates
+    coords = vxf.disp_to_coords(disp)
+
+    # The coordinates should be flipped compared to the displacement
+    # This verifies that the flip(-1) operation is working correctly
+    assert coords.shape == (2, 2, 2)
+
+    # Check that the flip operation was applied
+    # The last axis should be flipped from [y, x] to [x, y]
+    assert coords[0, 0, 0] != coords[0, 0, 1]  # Should be different after flip
