@@ -1,7 +1,15 @@
 {
     "editor.rulers": [99],
-    "python.languageServer": "Pylance",
+    "python.languageServer": "None",
     "python.analysis.autoSearchPaths": true,
     "python.analysis.useLibraryCodeForTypes": true,
-    "flake8.args": ["--max-line-length=100"],
+    "flake8.args": [
+        "--max-line-length=100"
+    ],
+    "cSpell.words": [
+        "ncaca",
+        "voxelmorph"
+    ],
+    "cursorpyright.analysis.autoSearchPaths": true,
+    "cursorpyright.analysis.useLibraryCodeForTypes": true,
 }
