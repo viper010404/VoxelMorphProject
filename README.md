@@ -21,10 +21,12 @@ We have several VoxelMorph tutorials:
 
 # Instructions
 
-To use the VoxelMorph library, either clone this repository and install the requirements listed in `setup.py` or install directly with pip.
+To use the VoxelMorph library, clone this repository and install the requirements listed in `setup.py`.
+
+> **Note**: The `pip install voxelmorph` command is not yet supported. Please install directly from GitHub:
 
 ```
-pip install voxelmorph
+pip install git+https://github.com/voxelmorph/voxelmorph.git
 ```
 
 ## Pre-trained models
