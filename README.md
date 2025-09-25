@@ -4,6 +4,16 @@
 
 > ⚠️ **Warning**: VoxelMorph is under active development. We are in the process of finalizing the structure for PyTorch -- interfaces may change.
 
+## Install
+
+To use the VoxelMorph library, either clone this repository and install the requirements listed in `setup.py` or install directly with pip.
+
+```
+pip install voxelmorph
+```
+
+**For users who want to use the stable TensorFlow version**, use either `pip install voxelmorph`, or pull/clone from the `dev-tensorflow` branch.
+
 # Tutorial
 
 We have several VoxelMorph tutorials:
