@@ -159,7 +159,10 @@ def spatial_transform(
         # convert the displacement crs to absolute crs scaled to range [-1, 1]
         trf = disp_to_coords(trf, meshgrid=meshgrid)
 
-    method = 'bilinear' if method == 'linear' else method
+    # Auto-detect interpolation mode for 'linear' based on dimensionality
+    if method == 'linear':
+        ndim = image.ndim - 1  # Exclude channel dimension
+        method = 'trilinear' if ndim == 3 else 'bilinear'
 
     reset_type = None
     if not torch.is_floating_point(image):
