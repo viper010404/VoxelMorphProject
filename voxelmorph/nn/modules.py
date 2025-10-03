@@ -90,14 +90,22 @@ class SpatialTransformer(nn.Module):
         Parameters
         ----------
         moving_image : torch.Tensor
-            Tensor to be spatially transformed by `deformation_field`
+            Tensor to be spatially transformed by `deformation_field`.
+            Shape: (B, C, *spatial_dims).
         deformation_field : torch.Tensor
             Field causing the spatial transformation of `moving_image`.
+            Shape: (B, ndim, *spatial_dims).
 
         Returns
         -------
         torch.Tensor
             Warped `moving_image` according to the `deformation_field`.
+            Output shape matches `moving_image` shape: (B, C, *spatial_dims).
+
+        Notes
+        -----
+        - Expects deformation_field in channels-first format: (B, ndim, *spatial_dims)
+        - Internally converts to (B, *spatial_dims, ndim) for PyTorch's grid_sample
         """
 
         # Validate the dimensions of the input
