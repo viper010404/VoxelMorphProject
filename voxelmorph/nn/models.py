@@ -153,12 +153,12 @@ class VxmPairwise(nn.Module):
 
         # Initialize the velocity field integrator with spatial shape
         self.velocity_field_integrator = vxm.nn.modules.IntegrateVelocityField(
-            shape=self.spatial_shape[2:], steps=self.integration_steps, device=self.device
+            shape=self.spatial_shape, steps=self.integration_steps, device=self.device
         )
 
         # Initialize the spatial transformer with spatial shape
         self.spatial_transformer = vxm.nn.modules.SpatialTransformer(
-            size=self.spatial_shape[2:], device=self.device
+            size=self.spatial_shape, device=self.device
         )
 
     def forward(
