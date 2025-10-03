@@ -26,3 +26,9 @@ MANIFEST
 .vscode/settings.json
 .vscode/settings.json
 **/*.ipynb
+
+# Data files
+**/*.h5
+data.tar.gz
+fs_rgb.npy
+**/*.npz
