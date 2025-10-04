@@ -132,7 +132,7 @@ class Grad:
 
         return df
 
-    def loss(self, _, y_pred):
+    def loss(self, y_pred):
         """
         Compute gradient penalty loss.
 
@@ -157,6 +157,7 @@ class Grad:
         - Do NOT pass PyTorch grids in (B, *spatial_dims, ndim) format
         - Computes mean gradient magnitude across all spatial locations and channels
         """
+    def loss(self, y_pred):
         if self.penalty == 'l1':
             dif = [torch.abs(f) for f in self._diffs(y_pred)]
         else:
