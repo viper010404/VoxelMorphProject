@@ -153,12 +153,12 @@ class VxmPairwise(nn.Module):
 
         # Initialize the velocity field integrator with spatial shape
         self.velocity_field_integrator = vxm.nn.modules.IntegrateVelocityField(
-            shape=self.spatial_shape[2:], steps=self.integration_steps, device=self.device
+            shape=self.spatial_shape, steps=self.integration_steps, device=self.device
         )
 
         # Initialize the spatial transformer with spatial shape
         self.spatial_transformer = vxm.nn.modules.SpatialTransformer(
-            size=self.spatial_shape[2:], device=self.device
+            size=self.spatial_shape, device=self.device
         )
 
     def forward(
@@ -182,22 +182,27 @@ class VxmPairwise(nn.Module):
         Parameters
         ----------
         source : torch.Tensor
-            Source image tensor with batch and channel dimensions.
+            Source image tensor with shape (B, C_source, *spatial_dims).
         target : torch.Tensor
-            Target image tensor. Must have the same shape as `source`.
+            Target image tensor with shape (B, C_target, *spatial_dims).
+            Must have the same spatial dimensions as `source`.
         return_warped : bool, optional
             If `True`, also return the warped source image. Default is `False`.
 
         Returns
         -------
         Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
-            - If `return_warped=False`: `velocity` (Tensor)
-            - If `return_warped=True`: (`velocity`, `warped_source`)
+            - If `return_warped=False`: velocity field with shape (B, ndim, *spatial_dims)
+              in VoxelMorph channels-first convention.
+            - If `return_warped=True`: tuple of (velocity, warped_source) where velocity has
+              shape (B, ndim, *spatial_dims) and warped_source matches source shape
+              (B, C_source, *spatial_dims).
         """
         # Pass combined features through the model's backbone & flow layer
         combined_features = torch.cat([source, target], dim=1)
         combined_features = self.model(combined_features)
         velocity = self.flow_layer(combined_features)   # Positive velocity: (source -> target)
+        self.velocity = velocity
 
         if not return_warped:
             return velocity
