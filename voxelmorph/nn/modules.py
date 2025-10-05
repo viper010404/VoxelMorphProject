@@ -67,7 +67,8 @@ class SpatialTransformer(nn.Module):
 
         # Make identity grid (the grid to later warp with deformation field) and register as a
         # buffer (without saving to `state_dict`: persistent=False)
-        identity_grid = nef.volshape_to_ndgrid(size=size, device=device)
+        identity_grid = nef.volshape_to_ndgrid(size=size, device=device, stack=True)
+        identity_grid = identity_grid.unsqueeze(0)  # Add batch dimension
 
         # Fix from PR #652: ensure identity grid matches PyTorch grid_sample axis convention
         # The last axis should be ordered as [X, Y, (Z, ...)] to match grid_sample expectations
