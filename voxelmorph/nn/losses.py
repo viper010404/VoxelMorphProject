@@ -103,7 +103,6 @@ class Dice:
         dice = torch.mean(top / bottom)
         return -dice
 
-
 class Grad:
     """
     N-D gradient loss.
@@ -133,6 +132,31 @@ class Grad:
 
         return df
 
+    def loss(self, y_pred):
+        """
+        Compute gradient penalty loss.
+
+        Computes spatial gradients using finite differences along each dimension,
+        applies L1 or L2 penalty, and returns the average across all dimensions.
+
+        Parameters
+        ----------
+        _ : None
+            Placeholder for target (not used in gradient loss).
+        y_pred : torch.Tensor
+            Predicted displacement or velocity field with shape (B, ndim, *spatial_dims).
+
+        Returns
+        -------
+        torch.Tensor
+            Gradient penalty loss with shape (B,) containing per-batch loss values.
+
+        Notes
+        -----
+        - Expects channels-first format: (B, ndim, *spatial_dims)
+        - Do NOT pass PyTorch grids in (B, *spatial_dims, ndim) format
+        - Computes mean gradient magnitude across all spatial locations and channels
+        """
     def loss(self, y_pred):
         if self.penalty == 'l1':
             dif = [torch.abs(f) for f in self._diffs(y_pred)]
