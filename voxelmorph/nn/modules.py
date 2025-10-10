@@ -65,18 +65,18 @@ class SpatialTransformer(nn.Module):
         self.interpolation_mode = interpolation_mode
         self.align_corners = align_corners
 
-        # Make identity grid (the grid to later warp with deformation field) and register as a
-        # buffer (without saving to `state_dict`: persistent=False)
-        identity_grid = nef.volshape_to_ndgrid(size=size, device=device)
+        # Make identity grid, used to create absolute grid location from displacement
+        identity_grid = nef.volshape_to_ndgrid(size=size, device=device, stack=True)
+        identity_grid = identity_grid.unsqueeze(0)  # Add batch dimension
 
-        # Fix from PR #652: ensure identity grid matches PyTorch grid_sample axis convention
+        # convert to grid_sample axis convention. Size is |Z|Y|X| for 3D, |Y|X| for 2D
         # The last axis should be ordered as [X, Y, (Z, ...)] to match grid_sample expectations
         identity_grid = identity_grid.flip(-1)
 
         self.register_buffer(
             name='identity_grid',
             tensor=identity_grid,
-            persistent=False  # Don't save to this module's state dict!
+            persistent=False  # Don't save to state dict
         )
 
     def forward(
