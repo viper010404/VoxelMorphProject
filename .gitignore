@@ -32,3 +32,7 @@ MANIFEST
 data.tar.gz
 fs_rgb.npy
 **/*.npz
+data/*
+.claude/*
+CLAUDE.md
+TODOs
