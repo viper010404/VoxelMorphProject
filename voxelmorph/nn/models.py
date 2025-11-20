@@ -123,7 +123,7 @@ class VxmPairwise(nn.Module):
             - `'a'`: Activation
         integration_steps : int, optional
             Number of scaling and squaring steps for integrating the flow field.
-            Default is 5 (no integration).
+            Default is 5.
         device : str, optional
             Device identifier (e.g., 'cpu' or 'cuda') to place/run the model on.
         """
