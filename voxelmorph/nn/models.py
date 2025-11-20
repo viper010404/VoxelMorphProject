@@ -56,7 +56,7 @@ class VxmPairwise(nn.Module):
         If not provided, it defaults to a normal distribution
         with mean 0 and standard deviation `1e-5`.
     integration_steps : int, optional
-        Number of steps to take in integrating the flow field. Default is 1.
+        Number of steps to take in integrating the flow field. Default is 5.
     **kwargs : dict
         Additional keyword arguments passed to the `BasicUNet` constructor.
 
@@ -86,7 +86,7 @@ class VxmPairwise(nn.Module):
         order: str = 'caca',
         final_activation: Union[str, nn.Module, None] = None,
         flow_initializer: Union[float, ne.samplers.Sampler] = ne.samplers.Normal(0, 1e-5),
-        integration_steps: int = 0,
+        integration_steps: int = 5,
         resize_integrated_fields: bool = False,
         device: str = "cpu",
     ):
@@ -123,7 +123,7 @@ class VxmPairwise(nn.Module):
             - `'a'`: Activation
         integration_steps : int, optional
             Number of scaling and squaring steps for integrating the flow field.
-            Default is 0 (no integration).
+            Default is 5 (no integration).
         device : str, optional
             Device identifier (e.g., 'cpu' or 'cuda') to place/run the model on.
         """
@@ -196,7 +196,7 @@ class VxmPairwise(nn.Module):
             Type of field to return. Options are:
             - 'velocity' or 'svf': Return the velocity (stationary velocity field).
             - 'displacement': Return the integrated displacement field.
-            Default is 'velocity'. Requires `integration_steps > 0` when set to 'displacement'.
+            Default is 'velocity'.
 
         Returns
         -------
@@ -208,7 +208,8 @@ class VxmPairwise(nn.Module):
             - Both flags: (field, warped_source, warped_target)
 
             Where:
-            - field shape (B, ndim, *spatial_dims) - velocity or displacement based on return_field_type
+            - field shape (B, ndim, *spatial_dims) - velocity or displacement based on
+              return_field_type
             - warped_source shape (B, C_source, *spatial_dims)
             - warped_target shape (B, C_target, *spatial_dims)
 
@@ -217,9 +218,6 @@ class VxmPairwise(nn.Module):
         ValueError
             If `return_warped_target=True` but `integration_steps=0`. Returning the warped
             target requires diffeomorphic registration to compute a proper inverse transformation.
-        ValueError
-            If `return_field_type='displacement'` but `integration_steps=0`. Cannot return
-            displacement field without integration.
         ValueError
             If `return_field_type` is not one of {'velocity', 'svf', 'displacement'}.
         """
@@ -232,11 +230,6 @@ class VxmPairwise(nn.Module):
         if self.integration_steps == 0:
             if return_warped_target:
                 raise ValueError("Cannot return warped target image when integration_steps=0.")
-            if return_field_type == 'displacement':
-                raise ValueError(
-                    "Cannot return displacement field when integration_steps=0. "
-                    "Set integration_steps > 0 or use return_field_type='velocity'."
-                )
 
         # Pass combined features through the model's backbone & flow layer
         combined_features = torch.cat([source, target], dim=1)
@@ -254,11 +247,12 @@ class VxmPairwise(nn.Module):
         pos_displacement = velocity
         neg_displacement = None
 
-        if self.integration_steps > 0:
-
-            if return_warped_source or return_field_type == 'displacement':
+        if return_warped_source or return_field_type == 'displacement':
+            if self.integration_steps > 0:
                 # Only need positive displacement
                 pos_displacement = self.velocity_field_integrator(velocity)
+
+        if self.integration_steps > 0:
 
             if return_warped_target:
                 # Only need negative displacement
