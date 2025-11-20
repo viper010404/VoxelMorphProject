@@ -68,9 +68,9 @@ class VxmPairwise(nn.Module):
 
     Methods
     -------
-    forward(source, target)
-        Combines source and target images, processes them through the
-        UNet and the flow layer, and returns the resulting flow field.
+    forward(source, target, return_warped_source=False, return_warped_target=False)
+        Combines source and target images, processes them through the UNet and the flow layer,
+        and returns the velocity field. Optionally returns warped source and/or target images.
     """
 
     def __init__(
@@ -85,7 +85,6 @@ class VxmPairwise(nn.Module):
         order: str = 'caca',
         final_activation: Union[str, nn.Module, None] = None,
         flow_initializer: Union[float, ne.samplers.Sampler] = ne.samplers.Normal(0, 1e-5),
-        bidirectional_cost: bool = False,
         integration_steps: int = 0,
         resize_integrated_fields: bool = False,
         device: str = "cpu",
@@ -121,8 +120,6 @@ class VxmPairwise(nn.Module):
             - `'c'`: Convolution
             - `'n'`: Normalization
             - `'a'`: Activation
-        bidirectional_cost : bool, optional
-            Enable calculation of the cost-function bidirectionally. Default is False
         integration_steps : int, optional
             Number of scaling and squaring steps for integrating the flow field.
             Default is 0 (no integration).
@@ -135,7 +132,6 @@ class VxmPairwise(nn.Module):
 
         # Set constant attrs
         self.integration_steps = integration_steps
-        self.bidirectional_cost = bidirectional_cost
         self.resize_integrated_fields = resize_integrated_fields
         self.device = device
         self.spatial_shape = spatial_shape
@@ -167,17 +163,19 @@ class VxmPairwise(nn.Module):
         self,
         source: torch.Tensor,
         target: torch.Tensor,
+        return_warped_source: bool = False,
+        return_warped_target: bool = False,
         return_warped: bool = False,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
         """
         Forward pass of `VxmPairwise`.
 
         This forward pass concatenates the `source` and `target` images, processes them with a
         `BasicUNet` backbone, and uses a flow layer to predict a velocity field (source -> target).
 
-        By default, this method returns only the predicted velocity field. If `return_warped=True`,
-        it will also return the source image warped by the positive displacement field. The
-        displacement field is obtained by integrating the velocity field when
+        By default, this method returns only the predicted velocity field. You can optionally
+        request warped versions of the source and/or target images using the return flags.
+        The displacement field is obtained by integrating the velocity field when
         `integration_steps > 0`; otherwise, the velocity field is used directly as the
         displacement for warping.
 
@@ -189,38 +187,71 @@ class VxmPairwise(nn.Module):
             Target image tensor with shape (B, C_target, *spatial_dims).
             Must have the same spatial dimensions as `source`.
         return_warped : bool, optional
-            If `True`, also return the warped source image. Default is `False`.
+            Shortcut for `return_warped_source=True`. Default is `False`.
+        return_warped_source : bool, optional
+            If `True`, include the warped source image in the return tuple. Default is `False`.
+        return_warped_target : bool, optional
+            If `True`, include the warped target image in the return tuple. Default is `False`.
+            Requires `integration_steps > 0` to ensure proper inverse transformation via
+            stationary velocity field integration.
 
         Returns
         -------
-        Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
-            - If `return_warped=False`: velocity field with shape (B, ndim, *spatial_dims)
-              in VoxelMorph channels-first convention.
-            - If `return_warped=True`: tuple of (velocity, warped_source) where velocity has
-              shape (B, ndim, *spatial_dims) and warped_source matches source shape
-              (B, C_source, *spatial_dims).
+        Union[torch.Tensor, Tuple[torch.Tensor, ...]]
+            Return values depend on the flags that are set:
+            - No flags (default): velocity
+            - `return_warped_source=True` only: (velocity, warped_source)
+            - `return_warped_target=True` only: (velocity, warped_target)
+            - Both flags: (velocity, warped_source, warped_target)
+
+            Where:
+            - velocity shape (B, ndim, *spatial_dims)
+            - warped_source shape (B, C_source, *spatial_dims)
+            - warped_target shape (B, C_target, *spatial_dims)
+
+        Raises
+        ------
+        ValueError
+            If `return_warped_target=True` but `integration_steps=0`. Returning the warped
+            target requires diffeomorphic registration to compute a proper inverse transformation.
         """
+        # Handle backward compatibility: return_warped is shortcut for return_warped_source
+        if return_warped:
+            return_warped_source = True
+
+        if return_warped_target and self.integration_steps == 0:
+            raise ValueError("Cannot return warped target image when integration_steps=0.")
+
         # Pass combined features through the model's backbone & flow layer
         combined_features = torch.cat([source, target], dim=1)
         combined_features = self.model(combined_features)
         velocity = self.flow_layer(combined_features)   # Positive velocity: (source -> target)
         self.velocity = velocity
 
-        if not return_warped:
+        if not return_warped_source and not return_warped_target:
             return velocity
 
-        # If a warped image is requested, produce a displacement field for warping
-        displacement = velocity
+        pos_displacement = velocity
+        neg_displacement = None
 
         if self.integration_steps > 0:
-            # Provide negative velocity only when bidirectional cost is desired
-            neg_velocity = -velocity if self.bidirectional_cost else None
-            displacement, _ = self._integrate_velocity_fields(velocity, neg_velocity)
+            # Integrate both positive and negative velocities when any warped image is requested
+            pos_displacement, neg_displacement = self._integrate_velocity_fields(
+                velocity, -velocity
+            )
 
-        # Warp the source image with the displacement field
-        warped_source = self._spatial_transform(source, displacement)
+        # Build return tuple starting with velocity
+        outputs = [velocity]
 
-        return velocity, warped_source
+        if return_warped_source:
+            warped_source = self._spatial_transform(source, pos_displacement)
+            outputs.append(warped_source)
+
+        if return_warped_target:
+            warped_target = self._spatial_transform(target, neg_displacement)
+            outputs.append(warped_target)
+
+        return tuple(outputs)
 
     def _init_flow_layer(
         self,
@@ -272,14 +303,12 @@ class VxmPairwise(nn.Module):
         self,
         pos_flow: torch.Tensor,
         neg_flow: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Integrate the velocity fields to obtain diffeomorphic warp (displacement) fields.
 
-        Derive a smooth and invertable displacement field by integrating a velocity field via the
-        scaling and squaring method. If no `IntegrateVelocityField` object exists in the model's
-        state dictionary, instantiate it with the correct size of the input and insert it. This will
-        only happen once upon initial call of this method.
+        Derive smooth and invertable displacement fields by integrating velocity fields via the
+        scaling and squaring method. Both positive and negative flows are integrated when provided.
 
         Parameters
         ----------
@@ -290,16 +319,17 @@ class VxmPairwise(nn.Module):
 
         Returns
         -------
-        torch.Tensor
-            Displacement field obtained by integrating the velocity field via scaling and squaring.
+        Tuple[torch.Tensor, torch.Tensor]
+            Tuple of (positive_displacement, negative_displacement) where each displacement field
+            is obtained by integrating the corresponding velocity field via scaling and squaring.
         """
         # Integrate the positive flow
-        pos_flow = self.velocity_field_integrator(pos_flow)
+        pos_displacement = self.velocity_field_integrator(pos_flow)
 
-        # Integrate the negative velocity field if bidirectional cost is enabled
-        neg_flow = self.velocity_field_integrator(neg_flow) if self.bidirectional_cost else None
+        # Integrate the negative velocity field
+        neg_displacement = self.velocity_field_integrator(neg_flow)
 
-        return pos_flow, neg_flow
+        return pos_displacement, neg_displacement
 
     def _spatial_transform(
         self,

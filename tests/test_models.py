@@ -20,7 +20,23 @@ def dummy_input_pair():
     return source, target
 
 
-def test_forward_output_shape(dummy_input_pair):
+@pytest.fixture
+def vxm_model():
+    """
+    Create a VxmPairwise model for testing with standard 3D configuration.
+    """
+
+    model = vxm.nn.models.VxmPairwise(
+        ndim=3,
+        source_channels=1,
+        target_channels=1,
+        spatial_shape=(32, 32, 32),
+        device="cpu"
+    )
+    return model
+
+
+def test_forward_output_shape(dummy_input_pair, vxm_model):
     """
     Test that the forward method returns correct output shapes when without trying registration or
     the bidirectional cost.
@@ -29,41 +45,24 @@ def test_forward_output_shape(dummy_input_pair):
     # Unpack dummy input pair
     source, target = dummy_input_pair
 
-    # Initialize model
-    model = vxm.nn.models.VxmPairwise(
-        ndim=3,
-        source_channels=1,
-        target_channels=1,
-        spatial_shape=(32, 32, 32),
-        device="cpu"
-    )
-
-    output = model(source, target)
+    output = vxm_model(source, target)
 
     assert isinstance(output, torch.Tensor)
     assert output.shape[2:] == source.shape[2:]
 
     # Ensure transformer is initialized after forward
-    assert hasattr(model, "flow_layer")
-    assert hasattr(model, "spatial_transformer")
-    assert hasattr(model, "velocity_field_integrator")
+    assert hasattr(vxm_model, "flow_layer")
+    assert hasattr(vxm_model, "spatial_transformer")
+    assert hasattr(vxm_model, "velocity_field_integrator")
 
 
-def test_return_warped_mode(dummy_input_pair):
+def test_backward_compat_return_warped_mode(dummy_input_pair, vxm_model):
     """
     Test that forward pass with registration returns warped source and displacement field.
     """
 
-    model = vxm.nn.models.VxmPairwise(
-        ndim=3,
-        source_channels=1,
-        target_channels=1,
-        spatial_shape=(32, 32, 32),
-        device="cpu"
-    )
-
     source, target = dummy_input_pair
-    warped_source, pos_flow = model(source, target, return_warped=True)
+    velocity, warped_source = vxm_model(source, target, return_warped=True)
 
+    assert velocity.shape[2:] == source.shape[2:]
     assert warped_source.shape[2:] == source.shape[2:]
-    assert pos_flow.shape[2:] == source.shape[2:]
