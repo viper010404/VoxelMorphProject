@@ -48,7 +48,7 @@ class VxmPairwise(nn.Module):
         Activation functions for the UNet layers. Can be a list of
         activation functions or a single function. Default is `nn.ReLU`.
     order : str, optional
-        The order of operations in each UNet block. Default is `'ncaca'`.
+        The order of operations in each UNet block. Default is `'ca'`.
     final_activation : Union[str, nn.Module, None], optional
         The activation applied to the final output of the network. Default is `None`.
     flow_initializer : ne.random.Sampler, optional
@@ -83,7 +83,7 @@ class VxmPairwise(nn.Module):
         nb_features: Sequence[int] = (16, 16, 16, 16, 16),
         normalizations: Union[List[Union[Callable, str]], Callable, str, None] = None,
         activations: Union[List[Union[Callable, str]], Callable, str, None] = nn.ReLU,
-        order: str = 'caca',
+        order: str = 'ca',
         final_activation: Union[str, nn.Module, None] = None,
         flow_initializer: Union[float, ne.samplers.Sampler] = ne.samplers.Normal(0, 1e-5),
         integration_steps: int = 5,
