@@ -18,6 +18,7 @@ __all__ = [
     "disp_to_coords",
     "integrate_disp",
     "angles_to_rotation_matrix",
+    "compose",
     "compose_affine",
     "gaussian_kernel_1d",
     "gaussian_blur",
@@ -1027,3 +1028,83 @@ def constant_shift_field(
         flow_field[:, 0, ...] /= (spatial_dims[0] - 1)
 
     return flow_field
+
+
+def is_affine_shape(shape: tuple) -> bool:
+    """
+    Determine whether the given shape represents an N-dimensional affine matrix.
+
+    An affine matrix has shape (..., M, N+1) where:
+    - N is the spatial dimensionality (2 or 3)
+    - M is either N or N+1 (compact or square form)
+
+    Parameters
+    ----------
+    shape : tuple
+        Shape of the tensor to check.
+
+    Returns
+    -------
+    bool
+        True if shape represents an affine matrix, False otherwise.
+    """
+    if len(shape) < 2:
+        return False
+
+    rows, cols = shape[-2], shape[-1]
+
+    # Cols should be N+1 where N is 2 or 3
+    ndim = cols - 1
+    if ndim not in (2, 3):
+        return False
+
+    # rows should be N or N+1
+    if rows not in (ndim, ndim + 1):
+        return False
+
+    return True
+
+
+def make_square_affine(mat: Tensor) -> Tensor:
+    """
+    Convert affine matrix from compact form (..., N, N+1) to square form (..., N+1, N+1).
+
+    Adds the homogeneous row [0, 0, ..., 0, 1] to the bottom of the matrix.
+
+    Parameters
+    ----------
+    mat : Tensor
+        Affine matrix of shape (..., M, N+1) where M is N or N+1.
+
+    Returns
+    -------
+    Tensor
+        Square affine matrix of shape (..., N+1, N+1).
+
+    Examples
+    --------
+    >>> affine = torch.tensor(
+    >>> ... [[1., 0., 5.],
+    >>> ... [0., 1., 3.]]
+    >>> )
+    >>> square = make_square_affine(affine)
+    >>> square.shape
+    torch.Size([3, 3])
+    >>> square[-1]
+    tensor([0., 0., 1.])
+    """
+    if not is_affine_shape(mat.shape):
+        raise ValueError(f'Invalid affine shape: {mat.shape}')
+
+    # Already square
+    if mat.shape[-2] == mat.shape[-1]:
+        return mat
+
+    # Get dimensions
+    *batch_dims, rows, cols = mat.shape
+
+    # Create bottom row as [0, 0, ..., 0, 1]
+    bottom_row = torch.zeros(*batch_dims, 1, cols, dtype=mat.dtype, device=mat.device)
+    bottom_row[..., 0, -1] = 1.0
+
+    return torch.cat([mat, bottom_row], dim=-2)
