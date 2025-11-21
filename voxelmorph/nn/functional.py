@@ -34,8 +34,10 @@ __all__ = [
 
 def affine_to_disp(
     affine: Tensor,
-    meshgrid: Tensor,
-    rotate_around_center: Optional[bool] = True
+    meshgrid: Tensor | None = None,
+    origin_at_center: bool = True,
+    shape: Sequence[int] | None = None,
+    warp_right: Tensor | None = None
 ) -> Tensor:
     """
     Convert an affine transformation matrix to a displacement field.
@@ -43,41 +45,93 @@ def affine_to_disp(
     Parameters
     ----------
     affine : Tensor
-        Affine transformation matrix. It is expected to be a vox2vox target to source
-        transformation.
-    meshgrid : Tensor
-        The meshgrid tensor of shape `(W, H[, D], N)`, where N is the spatial dimensionality.
-    rotate_around_center : bool, optional
-        If True, the rotation will be around the center of the image, otherwise around the origin.
+        Affine transformation matrix of shape (..., N, N+1) or (..., N+1, N+1).
+        Expected to be a vox2vox target-to-source transformation.
+    meshgrid : Tensor, optional
+        Pre-computed meshgrid tensor of shape (*spatial_shape, N), where N is the spatial
+        dimensionality. If None, will be computed from `shape` parameter.
+    origin_at_center : bool, optional
+        If True, place the coordinate system origin at the image center. If False, origin
+        is at the top-left corner. Default is True.
+    shape : Sequence[int], optional
+        Spatial shape (N dimensions) to create meshgrid if `meshgrid` is not provided.
+        Required if `meshgrid` is None.
+    warp_right : Tensor, optional
+        Right-compose the affine with this displacement field of shape (..., *spatial_shape, N).
+        Computes affine(x + warp_right(x)) - x. Useful for composing transforms.
 
     Returns
     -------
     Tensor
-        The generated displacement field of shape `meshgrid.shape[:-1]`.
+        Displacement field of shape (..., *spatial_shape, N).
+
+    Examples
+    --------
+    >>> # Basic usage with pre-computed meshgrid
+    >>> affine = torch.tensor(
+    >>> ... [[1., 0., 5.],
+    >>> ... [0., 1., 3.]]
+    >>> )
+    >>> grid = grid_coordinates((64, 64))
+    >>> disp = affine_to_disp(affine, meshgrid=grid)
+
+    >>> # Using shape parameter instead
+    >>> disp = affine_to_disp(affine, shape=(64, 64))
+
+    >>> # Compose affine with existing displacement field
+    >>> warp = torch.randn(64, 64, 2)
+    >>> composed = affine_to_disp(affine, shape=(64, 64), warp_right=warp)
     """
+    if meshgrid is None:
+        if shape is None:
+            raise ValueError("Either `meshgrid` or `shape` must be provided")
+        meshgrid = grid_coordinates(shape, device=affine.device, dtype=affine.dtype)
+
     ndim = meshgrid.shape[-1]
-    shape = meshgrid.shape[:-1]
+    spatial_shape = meshgrid.shape[:-1]
 
-    # if rotate_around_center is enabled, adjust the meshgrid so that the rotation
-    # is around the center of the image instead of the origin
-    grid = meshgrid.clone() if rotate_around_center else meshgrid
-    if rotate_around_center:
+    if affine.shape[-1] != ndim + 1:
+        raise ValueError(
+            f'Affine dimensionality ({affine.shape[-1] - 1}D) does not match '
+            f'meshgrid dimensionality ({ndim}D)'
+        )
+
+    batch_shape = affine.shape[:-2]
+
+    # Adjust meshgrid to center origin if requested
+    grid = meshgrid.clone() if origin_at_center else meshgrid
+    if origin_at_center:
         for d in range(ndim):
-            grid[..., d] -= (shape[d] - 1) / 2
+            grid[..., d] -= (spatial_shape[d] - 1) / 2
 
-    # convert the meshgrid to homogeneous coordinates by appending a column of ones
-    coords = grid.view(-1, ndim)
-    ones = torch.ones((coords.shape[-2], 1), device=meshgrid.device)
-    coords = torch.cat([coords, ones], dim=-1)
+    # Flatten and transpose grid
+    mesh = grid.reshape(-1, ndim).T  # (ndim, num_voxels)
+    out = mesh
 
-    # Apply the affine transformation to the coordinates to get the displacement field
-    # affine needs to be vox2vox transformation matrix, and mapping from target to source
-    # the computed displacement field is the absolute crs in source space
-    disp = (affine @ coords.T)[:ndim].T
+    # Optionally right-compose with displacement field
+    if warp_right is not None:
+        if warp_right.shape[-ndim - 1: -1] != spatial_shape:
+            raise ValueError(
+                f'warp_right spatial shape {warp_right.shape[-ndim - 1:-1]} does not match '
+                f'meshgrid shape {spatial_shape}'
+            )
 
-    # Reshape the displacement field to match the shape of the meshgrid and subtract
-    # the original meshgrid to get the displacement field
-    disp = disp.view(*shape, ndim) - grid
+        # Flatten and transpose warp
+        warp_flat = warp_right.reshape(*warp_right.shape[:-ndim - 1], -1, ndim)
+        warp_flat = warp_flat.transpose(-2, -1)
+
+        # Add to coordinates with broadcasting for batch dimension
+        out = out + warp_flat
+
+    # Apply affine transformation with broadcasting
+    out = affine[..., :ndim, :ndim] @ out + affine[..., :ndim, -1:]
+    out = out - mesh  # Subtract original mesh to get displacement
+    out = out.transpose(-2, -1)
+
+    if batch_shape:
+        disp = out.reshape(*batch_shape, *spatial_shape, ndim)
+    else:
+        disp = out.reshape(*spatial_shape, ndim)
 
     return disp
 
@@ -135,7 +189,7 @@ def spatial_transform(
     method: str = 'linear',
     isdisp: bool = True,
     meshgrid: Tensor = None,
-    rotate_around_center: bool = True
+    origin_at_center: bool = True
 ) -> Tensor:
     """
     TODOC
@@ -150,8 +204,8 @@ def spatial_transform(
         trf = torch.linalg.inv(trf)
         trf = affine_to_disp(
             trf,
-            meshgrid,
-            rotate_around_center=rotate_around_center
+            meshgrid=meshgrid,
+            origin_at_center=origin_at_center
         )
         isdisp = True
 
