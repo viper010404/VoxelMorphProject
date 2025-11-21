@@ -165,7 +165,7 @@ class VxmPairwise(nn.Module):
         target: torch.Tensor,
         return_warped_source: bool = False,
         return_warped_target: bool = False,
-        return_field_type: Literal['velocity', 'svf', 'displacement'] = 'velocity',
+        return_field_type: Literal['displacement', 'velocity', 'svf'] = 'displacement',
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
         """
         Forward pass of `VxmPairwise`.
@@ -173,7 +173,7 @@ class VxmPairwise(nn.Module):
         This forward pass concatenates the `source` and `target` images, processes them with a
         `BasicUNet` backbone, and uses a flow layer to predict a velocity field (source -> target).
 
-        By default, this method returns only the predicted velocity field. You can optionally
+        By default, this method returns only the predicted displacement field. You can optionally
         request warped versions of the source and/or target images using the return flags.
         The displacement field is obtained by integrating the velocity field when
         `integration_steps > 0`; otherwise, the velocity field is used directly as the
@@ -194,9 +194,9 @@ class VxmPairwise(nn.Module):
             stationary velocity field integration.
         return_field_type : str, optional
             Type of field to return. Options are:
-            - 'velocity' or 'svf': Return the velocity (stationary velocity field).
             - 'displacement': Return the integrated displacement field.
-            Default is 'velocity'.
+            - 'velocity' or 'svf': Return the velocity (stationary velocity field).
+            Default is 'displacement'.
 
         Returns
         -------
