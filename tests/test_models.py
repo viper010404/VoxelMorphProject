@@ -30,7 +30,8 @@ def vxm_model():
         source_channels=1,
         target_channels=1,
         spatial_shape=(32, 32, 32),
-        device="cpu"
+        device="cpu",
+        integration_steps=0,
     )
     return model
 
@@ -69,19 +70,6 @@ def test_forward_output_shape(dummy_input_pair, vxm_model):
     # Ensure transformer is initialized after forward
     assert hasattr(vxm_model, "flow_layer")
     assert hasattr(vxm_model, "spatial_transformer")
-    assert hasattr(vxm_model, "velocity_field_integrator")
-
-
-def test_backward_compat_return_warped_mode(dummy_input_pair, vxm_model):
-    """
-    Test that forward pass with registration returns warped source and displacement field.
-    """
-
-    source, target = dummy_input_pair
-    velocity, warped_source = vxm_model(source, target, return_warped=True)
-
-    assert velocity.shape[2:] == source.shape[2:]
-    assert warped_source.shape[2:] == source.shape[2:]
 
 
 @pytest.mark.parametrize(
@@ -171,3 +159,74 @@ def test_return_warped_target_requires_integration(vxm_model):
         ValueError, match="Cannot return warped target image when integration_steps=0"
     ):
         vxm_model(source, target, return_warped_target=True)
+
+
+@pytest.mark.parametrize(
+    "return_field_type",
+    ['velocity', 'svf']
+)
+def test_return_field_type_velocity(dummy_input_pair, vxm_model, return_field_type):
+    """
+    Test that return_field_type='velocity' and 'svf' return the velocity field.
+    """
+    source, target = dummy_input_pair
+    output = vxm_model(source, target, return_field_type=return_field_type)
+
+    assert isinstance(output, torch.Tensor), "Expected single tensor output"
+    assert output.shape == (1, 3, 32, 32, 32), (
+        f"Expected shape (1, 3, 32, 32, 32), got {output.shape}"
+    )
+
+
+def test_return_field_type_displacement(dummy_input_pair, vxm_model_diffeomorphic):
+    """
+    Test that return_field_type='displacement' returns the displacement field.
+    """
+    source, target = dummy_input_pair
+    output = vxm_model_diffeomorphic(source, target, return_field_type='displacement')
+
+    assert isinstance(output, torch.Tensor), "Expected single tensor output"
+    assert output.shape == (1, 3, 32, 32, 32), (
+        f"Expected shape (1, 3, 32, 32, 32), got {output.shape}"
+    )
+
+
+def test_return_field_type_invalid(dummy_input_pair, vxm_model):
+    """
+    Test that invalid return_field_type raises ValueError.
+    """
+    source, target = dummy_input_pair
+
+    with pytest.raises(ValueError, match="return_field_type must be one of"):
+        vxm_model(source, target, return_field_type='invalid')
+
+
+def test_return_field_type_with_warped_images(dummy_input_pair, vxm_model_diffeomorphic):
+    """
+    Test that return_field_type works correctly with warped image returns.
+    """
+    source, target = dummy_input_pair
+
+    # Test with displacement field
+    disp, warped_source = vxm_model_diffeomorphic(
+        source, target,
+        return_warped_source=True,
+        return_field_type='displacement'
+    )
+
+    assert isinstance(disp, torch.Tensor), "Expected displacement tensor"
+    assert isinstance(warped_source, torch.Tensor), "Expected warped source tensor"
+    assert disp.shape == (1, 3, 32, 32, 32)
+    assert warped_source.shape == source.shape
+
+    # Test with velocity field
+    vel, warped_source = vxm_model_diffeomorphic(
+        source, target,
+        return_warped_source=True,
+        return_field_type='velocity'
+    )
+
+    assert isinstance(vel, torch.Tensor), "Expected velocity tensor"
+    assert isinstance(warped_source, torch.Tensor), "Expected warped source tensor"
+    assert vel.shape == (1, 3, 32, 32, 32)
+    assert warped_source.shape == source.shape
