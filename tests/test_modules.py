@@ -7,17 +7,9 @@ import torch
 
 # Third-party imports
 import pytest
-
-# Custom imports
-try:
-    import voxelmorph.nn.modules as vxm_modules
-    import voxelmorph.nn.functional as vxf
-    VOXELMORPH_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: VoxelMorph modules not available: {e}")
-    VOXELMORPH_AVAILABLE = False
-    vxm_modules = None
-    vxf = None
+import voxelmorph as vxm
+import voxelmorph.nn.modules as vxm_modules
+import voxelmorph.nn.functional as vxf
 
 
 # @pytest.mark.skipif(not VOXELMORPH_AVAILABLE, reason="VoxelMorph modules not available")
@@ -27,20 +19,20 @@ def test_spatial_transformer_identity_2d():
     This test directly exercises the SpatialTransformer class to catch axis convention bugs.
     """
     # Create SpatialTransformer for 2D
-    transformer = vxm_modules.SpatialTransformer(size=(4, 4), device="cpu")
+    transformer = vxm.nn.modules.SpatialTransformer(size=(4, 4), device="cpu")
 
     # Create a simple test image with known pattern
     img = torch.tensor([[[[1., 0., 0., 0.],
                          [0., 0., 0., 0.],
                          [0., 0., 0., 0.],
                          [0., 0., 0., 0.]]]], dtype=torch.float32)
-    
+
     # Zero displacement field (should produce identity transformation)
     zero_disp = torch.zeros(1, 2, 4, 4, dtype=torch.float32)
-    
+
     # Apply transformation
     result = transformer(img, zero_disp)
-    
+
     # Should be identical to input (within interpolation tolerance)
     assert result.shape == img.shape
     # Use lenient tolerance due to bilinear interpolation effects on small images
@@ -55,17 +47,17 @@ def test_spatial_transformer_identity_3d():
     """
     # Create SpatialTransformer for 3D
     transformer = vxm_modules.SpatialTransformer(size=(3, 3, 3), device="cpu")
-    
+
     # Create a simple 3D test image
     img = torch.zeros(1, 1, 3, 3, 3, dtype=torch.float32)
     img[0, 0, 1, 1, 1] = 1.0  # Single pixel in center
-    
+
     # Zero displacement field
     zero_disp = torch.zeros(1, 3, 3, 3, 3, dtype=torch.float32)
-    
+
     # Apply transformation
     result = transformer(img, zero_disp)
-    
+
     # Should be identical to input (within interpolation tolerance)
     assert result.shape == img.shape
     # Use lenient tolerance for 3D due to trilinear interpolation effects
@@ -81,19 +73,21 @@ def test_spatial_transformer_translation_2d():
     """
     # Create SpatialTransformer for 2D
     transformer = vxm_modules.SpatialTransformer(size=(3, 3), device="cpu")
-    
+
     # Create test image with 1 in top-left corner
     img = torch.tensor([[[[1., 0., 0.],
                          [0., 0., 0.],
                          [0., 0., 0.]]]], dtype=torch.float32)
-    
+
     # Create displacement field that moves everything right by 1 pixel
+    # Note: VoxelMorph uses backward warping (target-to-source semantics)
+    # Negative displacement moves pixels right (output samples from the left)
     disp = torch.zeros(1, 2, 3, 3, dtype=torch.float32)
-    disp[0, 0, :, :] = 1.0  # Move right by 1 pixel (X direction)
-    
+    disp[0, 0, :, :] = -1.0  # Move right by 1 pixel (X direction)
+
     # Apply transformation
     result = transformer(img, disp)
-    
+
     # Check that transformation occurred (result should be different from input)
     assert result.shape == img.shape
     # The result should be different from input due to the displacement
@@ -110,18 +104,20 @@ def test_spatial_transformer_translation_3d():
     """
     # Create SpatialTransformer for 3D
     transformer = vxm_modules.SpatialTransformer(size=(2, 2, 2), device="cpu")
-    
+
     # Create test image with 1 in corner
     img = torch.zeros(1, 1, 2, 2, 2, dtype=torch.float32)
     img[0, 0, 0, 0, 0] = 1.0  # Corner pixel
-    
+
     # Create displacement field that moves everything right by 1 pixel
+    # Note: VoxelMorph uses backward warping (target-to-source semantics)
+    # Negative displacement moves pixels right (output samples from the left)
     disp = torch.zeros(1, 3, 2, 2, 2, dtype=torch.float32)
-    disp[0, 0, :, :, :] = 1.0  # Move right by 1 pixel (X direction)
-    
+    disp[0, 0, :, :, :] = -1.0  # Move right by 1 pixel (X direction)
+
     # Apply transformation
     result = transformer(img, disp)
-    
+
     # Check that transformation occurred (result should be different from input)
     assert result.shape == img.shape
     assert not torch.allclose(result, img, atol=1e-1), "Transformation should change the image"
@@ -135,16 +131,16 @@ def test_spatial_transformer_rotation_2d():
     """
     # Create SpatialTransformer for 2D
     transformer = vxm_modules.SpatialTransformer(size=(3, 3), device="cpu")
-    
+
     # Create test image with L-shape pattern
     img = torch.tensor([[[[1., 1., 0.],
                          [1., 0., 0.],
                          [0., 0., 0.]]]], dtype=torch.float32)
-    
+
     # Create displacement field for 90-degree rotation around center
     # This is a more complex transformation that would reveal axis issues
     disp = torch.zeros(1, 2, 3, 3, dtype=torch.float32)
-    
+
     # Simple rotation: (x,y) -> (-y,x) around center (1,1)
     for i in range(3):
         for j in range(3):
@@ -152,10 +148,10 @@ def test_spatial_transformer_rotation_2d():
             new_x, new_y = -y, x  # 90-degree rotation
             disp[0, 0, i, j] = new_x - x  # X displacement
             disp[0, 1, i, j] = new_y - y  # Y displacement
-    
+
     # Apply transformation
     result = transformer(img, disp)
-    
+
     # Check that transformation occurred (result should be different from input)
     assert result.shape == img.shape
     assert not torch.allclose(result, img, atol=1e-1), "Rotation should change the image"
@@ -169,10 +165,10 @@ def test_spatial_transformer_different_sizes():
     """
     # Test various sizes (skip problematic ones with high interpolation effects)
     sizes = [(2, 2), (3, 3), (2, 2, 2), (3, 3, 3)]
-    
+
     for size in sizes:
         transformer = vxm_modules.SpatialTransformer(size=size, device="cpu")
-        
+
         # Create test image
         if len(size) == 2:
             img = torch.randn(1, 1, *size, dtype=torch.float32)
@@ -180,10 +176,10 @@ def test_spatial_transformer_different_sizes():
         else:  # 3D
             img = torch.randn(1, 1, *size, dtype=torch.float32)
             disp = torch.zeros(1, 3, *size, dtype=torch.float32)
-        
+
         # Apply transformation
         result = transformer(img, disp)
-        
+
         # Should maintain shape
         assert result.shape == img.shape
         # Should be close to input (zero displacement) - use lenient tolerance for interpolation
@@ -201,18 +197,18 @@ def test_spatial_transformer_device_consistency():
     img_cpu = torch.randn(1, 1, 3, 3, dtype=torch.float32)
     disp_cpu = torch.zeros(1, 2, 3, 3, dtype=torch.float32)
     result_cpu = transformer_cpu(img_cpu, disp_cpu)
-    
+
     assert result_cpu.device.type == "cpu"
     # CPU results should be close to input (zero displacement)
     assert torch.allclose(result_cpu, img_cpu, atol=1e-1)
-    
+
     # Test on CUDA if available
     if torch.cuda.is_available():
         transformer_cuda = vxm_modules.SpatialTransformer(size=(3, 3), device="cuda")
         img_cuda = torch.randn(1, 1, 3, 3, dtype=torch.float32, device="cuda")
         disp_cuda = torch.zeros(1, 2, 3, 3, dtype=torch.float32, device="cuda")
         result_cuda = transformer_cuda(img_cuda, disp_cuda)
-        
+
         assert result_cuda.device.type == "cuda"
         # CUDA should produce more precise results due to different numerical precision
         assert torch.allclose(result_cuda, img_cuda, atol=1e-6)
@@ -227,14 +223,14 @@ def test_spatial_transformer_interpolation_modes():
     img = torch.tensor([[[[1., 0., 0.],
                          [0., 0., 0.],
                          [0., 0., 0.]]]], dtype=torch.float32)
-    
+
     # Create displacement field
     disp = torch.zeros(1, 2, 3, 3, dtype=torch.float32)
     disp[0, 0, 0, 0] = 0.5  # Half-pixel displacement
-    
+
     # Test different interpolation modes
     modes = ["bilinear", "nearest", "bicubic"]
-    
+
     for mode in modes:
         transformer = vxm_modules.SpatialTransformer(
             size=(3, 3), 
@@ -242,7 +238,7 @@ def test_spatial_transformer_interpolation_modes():
             device="cpu"
         )
         result = transformer(img, disp)
-        
+
         assert result.shape == img.shape
         # Results should be different for different modes
         # but all should be valid
@@ -256,11 +252,11 @@ def test_spatial_transformer_align_corners():
     # Create test image
     img = torch.tensor([[[[1., 0.],
                          [0., 0.]]]], dtype=torch.float32)
-    
+
     # Create displacement field
     disp = torch.zeros(1, 2, 2, 2, dtype=torch.float32)
     disp[0, 0, 0, 0] = 0.1  # Small displacement
-    
+
     # Test with align_corners=True
     transformer_true = vxm_modules.SpatialTransformer(
         size=(2, 2), 
@@ -268,7 +264,7 @@ def test_spatial_transformer_align_corners():
         device="cpu"
     )
     result_true = transformer_true(img, disp)
-    
+
     # Test with align_corners=False
     transformer_false = vxm_modules.SpatialTransformer(
         size=(2, 2), 
@@ -276,7 +272,7 @@ def test_spatial_transformer_align_corners():
         device="cpu"
     )
     result_false = transformer_false(img, disp)
-    
+
     # Results should be different but both valid
     assert result_true.shape == img.shape
     assert result_false.shape == img.shape
@@ -291,7 +287,7 @@ def test_spatial_transformer_vs_functional_consistency():
     """
     # This test is complex due to different input expectations between the two interfaces.
     # For now, let's just test that both can be called without errors.
-    
+
     # Test SpatialTransformer
     transformer = vxm_modules.SpatialTransformer(size=(3, 3), device="cpu")
     img = torch.tensor([[[[1., 0., 0.],
@@ -299,14 +295,14 @@ def test_spatial_transformer_vs_functional_consistency():
                          [0., 0., 0.]]]], dtype=torch.float32)
     disp = torch.zeros(1, 2, 3, 3, dtype=torch.float32)
     result_class = transformer(img, disp)
-    
+
     # Test spatial_transform function (simplified to avoid dimension issues)
     # The image is 4D (B, C, H, W), so we need a displacement field with shape (B, H, W, D)
     # where D is the number of displacement dimensions (2 for 2D)
     # But the meshgrid has shape (B, H, W, 3) for a 2D image, so we need to match that
     disp_func = torch.zeros(1, 3, 3, 3, dtype=torch.float32)
     result_func = vxf.spatial_transform(img, disp_func, isdisp=True)
-    
+
     # Both should produce results with the same shape
     assert result_class.shape == result_func.shape
     assert result_class.shape == img.shape
@@ -320,30 +316,36 @@ def test_spatial_transformer_translation_precise():
     """
     # Create SpatialTransformer for 2D
     transformer = vxm_modules.SpatialTransformer(size=(5, 5), device="cpu")
-    
+
     # Create image with pixel at (2,2) - center of 5x5 grid
     img = torch.zeros(1, 1, 5, 5, dtype=torch.float32)
     img[0, 0, 2, 2] = 1.0
-    
+
     # Create displacement field that translates by (1, 1)
     # Note: Based on testing, positive displacement moves pixels towards (0,0)
     disp = torch.zeros(1, 2, 5, 5, dtype=torch.float32)
     disp[0, 0, :, :] = 1.0  # X translation
     disp[0, 1, :, :] = 1.0  # Y translation
-    
+
     # Apply transformation
     result = transformer(img, disp)
-    
+
     # The pixel should move from (2,2) to approximately (1,1) based on observed behavior
     # Due to bilinear interpolation, the energy will be distributed around the target location
-    assert result[0, 0, 1, 1] > 0.4, f"Pixel should be mostly at new location (1,1), got {result[0, 0, 1, 1]}"
-    assert result[0, 0, 2, 2] < 0.1, f"Pixel should be mostly gone from old location (2,2), got {result[0, 0, 2, 2]}"
-    
+    assert result[0, 0, 1, 1] > 0.4, (
+        f"Pixel should be mostly at new location (1,1), got {result[0, 0, 1, 1]}"
+    )
+    assert result[0, 0, 2, 2] < 0.1, (
+        f"Pixel should be mostly gone from old location (2,2), got {result[0, 0, 2, 2]}"
+    )
+
     # Check that the total energy is preserved (within interpolation tolerance)
     # Note: Energy may be lost due to boundary effects and interpolation artifacts
     original_sum = torch.sum(img)
     result_sum = torch.sum(result)
-    assert result_sum > 0.4, f"Energy should be preserved within reasonable bounds: {original_sum} vs {result_sum}"
+    assert result_sum > 0.4, (
+        f"Energy should be preserved within reasonable bounds: {original_sum} vs {result_sum}"
+    )
 
 
 # @pytest.mark.skipif(not VOXELMORPH_AVAILABLE, reason="VoxelMorph modules not available")
@@ -354,27 +356,29 @@ def test_spatial_transformer_invertibility():
     """
     # Create SpatialTransformer for 2D
     transformer = vxm_modules.SpatialTransformer(size=(4, 4), device="cpu")
-    
+
     # Create test image
     img = torch.randn(1, 1, 4, 4, dtype=torch.float32)
-    
+
     # Create small displacement field (large displacements may not be invertible)
     disp = torch.randn(1, 2, 4, 4, dtype=torch.float32) * 0.05  # Very small random displacement
-    
+
     # Forward transform
     warped = transformer(img, disp)
-    
+
     # Inverse transform (negative displacement)
     inverse_disp = -disp
     restored = transformer(warped, inverse_disp)
-    
+
     # Check that the transformation actually changed the image
     assert not torch.allclose(img, warped, atol=1e-6), "Forward transform should change the image"
-    
+
     # Check that the inverse transform produces a different result than the original
     # (This validates that the transformation is working, even if not perfectly invertible)
-    assert not torch.allclose(img, restored, atol=1e-6), "Inverse transform should produce different result"
-    
+    assert not torch.allclose(img, restored, atol=1e-6), (
+        "Inverse transform should produce different result"
+    )
+
     # Check that the result is reasonable (not all zeros or NaN)
     assert torch.sum(restored) != 0, "Inverse transform should not produce all zeros"
     assert torch.all(torch.isfinite(restored)), "Inverse transform should not produce NaN or Inf"
@@ -386,7 +390,7 @@ def test_spatial_transformer_error_handling():
     Test SpatialTransformer error handling for invalid inputs.
     """
     transformer = vxm_modules.SpatialTransformer(size=(3, 3), device="cpu")
-    
+
     # Test with wrong number of dimensions
     img_wrong_dims = torch.randn(1, 3, 3)  # Missing channel dimension
     disp_wrong_dims = torch.zeros(1, 2, 3, 3)
