@@ -89,7 +89,7 @@ def test_basic_unet_gradient_flow(sample_input_3d):
 def test_volshape_to_ndgrid_ij_indexing_2d():
     """Test volshape_to_ndgrid produces grids with ij indexing."""
     shape = (64, 64)
-    grid = nef.volshape_to_ndgrid(shape, indexing="ij")
+    grid = nef.volshape_to_ndgrid(shape, indexing="ij", stack=True).unsqueeze(0)
 
     assert grid.shape == (1, *shape, 2)
 
@@ -103,7 +103,7 @@ def test_volshape_to_ndgrid_ij_indexing_2d():
 def test_volshape_to_ndgrid_xy_indexing_2d():
     """Test volshape_to_ndgrid produces grids with xy indexing."""
     shape = (64, 64)
-    grid = nef.volshape_to_ndgrid(shape, indexing="xy")
+    grid = nef.volshape_to_ndgrid(shape, indexing="xy", stack=True).unsqueeze(0)
 
     # xy indexing: first coord (x) varies with second index (columns)
     assert grid[0, 0, 0, 0] == grid[0, 1, 0, 0]     # x constant along rows (i)
@@ -115,7 +115,7 @@ def test_volshape_to_ndgrid_xy_indexing_2d():
 def test_volshape_to_ndgrid_ij_indexing_3d():
     """Test volshape_to_ndgrid produces grids with ij indexing for 3D."""
     shape = (32, 32, 32)
-    grid = nef.volshape_to_ndgrid(shape, indexing="ij")
+    grid = nef.volshape_to_ndgrid(shape, indexing="ij", stack=True).unsqueeze(0)
 
     assert grid.shape == (1, *shape, 3)
 
@@ -128,7 +128,7 @@ def test_volshape_to_ndgrid_ij_indexing_3d():
 def test_volshape_to_ndgrid_xy_indexing_3d():
     """Test volshape_to_ndgrid produces grids with xy indexing for 3D."""
     shape = (32, 32, 32)
-    grid = nef.volshape_to_ndgrid(shape, indexing="xy")
+    grid = nef.volshape_to_ndgrid(shape, indexing="xy", stack=True).unsqueeze(0)
 
     # xy indexing: x varies with j, y varies with i
     assert grid[0, 0, 0, 0, 0] == grid[0, 1, 0, 0, 0]  # x constant along i
