@@ -6,43 +6,7 @@ Unit tests for the basic utility functions in voxelmorph.
 import torch
 
 import voxelmorph.nn.functional as vxf
-
-
-def test_grid_coordinates_2d():
-    """
-    grid_coordinates() should produce a (H, W, 2) mesh of (i, j) indices.
-    """
-    shape = (2, 3)
-    grid = vxf.grid_coordinates(shape)
-
-    # Check shape of grid
-    assert grid.shape == (2, 3, 2)
-
-    # Expected values:
-    # grid[y, x] == [y, x]
-    expected = torch.tensor(
-        [
-            [[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]],
-            [[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]],
-        ],
-        dtype=torch.float32,
-    )
-    assert torch.allclose(grid, expected)
-
-
-def test_grid_coordinates_3d():
-    """
-    grid_coordinates should produce a (D, H, W, 3) mesh of (z, y, x) indices.
-    """
-    shape = (2, 2, 2)
-    grid = vxf.grid_coordinates(shape)
-
-    # shape check
-    assert grid.shape == (2, 2, 2, 3)
-
-    # corner values:
-    assert torch.allclose(grid[0, 0, 0], torch.tensor([0.0, 0.0, 0.0]))
-    assert torch.allclose(grid[1, 1, 1], torch.tensor([1.0, 1.0, 1.0]))
+import neurite.nn.functional as nef
 
 
 def test_affine_to_disp_identity():
@@ -50,7 +14,7 @@ def test_affine_to_disp_identity():
     Identity affine should produce zero displacement everywhere.
     """
     shape = (3, 4)
-    grid = vxf.grid_coordinates(shape)
+    grid = nef.volshape_to_ndgrid(size=shape, stack=True)
     ndim = len(shape)
 
     # Identity affine
@@ -76,7 +40,7 @@ def test_affine_to_disp_translation():
     Pure translation affine should yield a constant field = translation.
     """
     shape = (2, 2)
-    grid = vxf.grid_coordinates(shape)
+    grid = nef.volshape_to_ndgrid(size=shape, stack=True)
     ndim = len(shape)
     tx, ty = 2.0, 3.0
 
@@ -268,7 +232,7 @@ def test_affine_to_disp_scaling_2d():
     """
     # Use a simple 2x2 grid for easier calculation
     shape = (2, 2)
-    grid = vxf.grid_coordinates(shape)
+    grid = nef.volshape_to_ndgrid(size=shape, stack=True)
     ndim = len(shape)
 
     # Simple 2x scaling in both directions, centered around origin
@@ -488,7 +452,7 @@ def test_affine_to_disp_large_translation():
     affine_to_disp should handle large translations correctly.
     """
     shape = (3, 3)
-    grid = vxf.grid_coordinates(shape)
+    grid = nef.volshape_to_ndgrid(size=shape, stack=True)
     ndim = len(shape)
 
     # Large translation
@@ -617,30 +581,6 @@ def test_params_to_affine_analytical():
 
     assert torch.allclose(result, expected_result, atol=1e-6), \
         f"Point transformation failed: expected {expected_result}, got {result}"
-
-
-def test_grid_coordinates_xy_indexing():
-    """
-    grid_coordinates with 'xy' indexing should produce correct coordinates.
-    """
-    shape = (2, 3)
-    grid = vxf.grid_coordinates(shape, indexing='xy')
-
-    # Check shape - with 'xy' indexing, the shape dimensions are swapped
-    assert grid.shape == (3, 2, 2)  # (width, height, 2) instead of (height, width, 2)
-
-    # With 'xy' indexing, coordinates should be [x, y] where:
-    # - First dimension iterates over y-values (rows)
-    # - Second dimension iterates over x-values (columns)
-    expected = torch.tensor(
-        [
-            [[0.0, 0.0], [1.0, 0.0]],  # y=0: x varies (0,1)
-            [[0.0, 1.0], [1.0, 1.0]],  # y=1: x varies (0,1)
-            [[0.0, 2.0], [1.0, 2.0]],  # y=2: x varies (0,1)
-        ],
-        dtype=torch.float32,
-    )
-    assert torch.allclose(grid, expected)
 
 
 def test_spatial_transform_different_dtypes():
