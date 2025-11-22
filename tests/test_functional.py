@@ -118,7 +118,7 @@ def test_disp_to_coords_zero_disp_2d():
     #  col indices j \isin {0, 1, 2} ->  bounded on [-1, 1] with 3 elements -> [-1, 0, 1]
     expected = torch.tensor([
         [[-1., -1.], [0., -1.], [1., -1.]],
-        [[-1.,  1.], [0.,  1.], [1.,  1.]],
+        [[-1., 1.], [0., 1.], [1., 1.]],
     ], dtype=torch.float32)
 
     assert coords.shape == (2, 3, 2)
@@ -279,7 +279,7 @@ def test_affine_to_disp_scaling_2d():
     affine[1, 1] = scale_factor  # y scaling
     # No translation - scale around origin
 
-    disp = vxf.affine_to_disp(affine, grid, rotate_around_center=False)
+    disp = vxf.affine_to_disp(affine, meshgrid=grid, origin_at_center=False)
 
     # Check shape
     assert disp.shape == shape + (ndim,)
@@ -399,8 +399,8 @@ def test_compose_affine_complex_2d():
     # Where T=translation, R=rotation, Z=scale, S=shear
     expected_affine = torch.tensor([
         [1.0607, -1.0960, 2.0000],
-        [1.0607,  1.7324, 3.0000],
-        [0.0000,  0.0000, 1.0000]
+        [1.0607, 1.7324, 3.0000],
+        [0.0000, 0.0000, 1.0000]
     ], dtype=torch.float64)
 
     # Check that the result matches the expected matrix exactly
@@ -425,10 +425,12 @@ def test_disp_to_coords_zero_disp():
     # [-1,  1], [1,  1]
     expected_coords = torch.tensor([
         [[-1.0, -1.0], [1.0, -1.0]],
-        [[-1.0,  1.0], [1.0,  1.0]]
+        [[-1.0, 1.0], [1.0, 1.0]]
     ], dtype=torch.float32)
 
-    assert torch.allclose(coords, expected_coords, atol=1e-6), f"Expected {expected_coords}, got {coords}"
+    assert torch.allclose(coords, expected_coords, atol=1e-6), (
+        f"Expected {expected_coords}, got {coords}"
+    )
 
 
 def test_integrate_disp_zero_steps():
@@ -500,8 +502,121 @@ def test_affine_to_disp_large_translation():
     # Check shape
     assert disp.shape == shape + (ndim,)
     # All displacements should be the translation value
-    expected_disp = torch.full(shape + (ndim,), large_translation, dtype=grid.dtype, device=grid.device)
+    expected_disp = torch.full(
+        shape + (ndim,),
+        large_translation,
+        dtype=grid.dtype,
+        device=grid.device
+    )
     assert torch.allclose(disp, expected_disp)
+
+
+def test_affine_to_disp_origin_at_center_scaling():
+    """
+    Test that origin_at_center controls the fixed point during scaling.
+
+    With origin_at_center=True: center point should have zero displacement
+    With origin_at_center=False: corner (0,0) should have zero displacement
+    """
+    shape = (3, 3)
+    ndim = 2
+
+    # 2x scaling affine
+    scale_factor = 2.0
+    affine = torch.eye(ndim, ndim + 1)
+    affine[0, 0] = scale_factor
+    affine[1, 1] = scale_factor
+
+    # Test with origin_at_center=True (scale around center)
+    disp_centered = vxf.affine_to_disp(affine, shape=shape, origin_at_center=True)
+
+    # Center point (1,1) should have zero displacement
+    assert torch.allclose(disp_centered[1, 1], torch.zeros(2), atol=1e-6), \
+        f"Center should be fixed, got displacement {disp_centered[1, 1]}"
+
+    # Test with origin_at_center=False (scale around corner)
+    disp_corner = vxf.affine_to_disp(affine, shape=shape, origin_at_center=False)
+
+    # Corner (0,0) should have zero displacement
+    assert torch.allclose(disp_corner[0, 0], torch.zeros(2), atol=1e-6), \
+        f"Corner should be fixed, got displacement {disp_corner[0, 0]}"
+
+    # The two displacement fields should be different
+    assert not torch.allclose(disp_centered, disp_corner), \
+        "Displacement fields should differ based on origin_at_center"
+
+
+def test_affine_to_disp_origin_at_center_rotation():
+    """
+    Test that origin_at_center controls the fixed point during rotation.
+
+    90-degree rotation makes the difference very obvious.
+    With origin_at_center=True: center stays fixed
+    With origin_at_center=False: corner (0,0) stays fixed
+    """
+    shape = (3, 3)
+
+    # 90-degree counter-clockwise rotation
+    affine = torch.tensor([[0., -1., 0.],
+                           [1., 0., 0.]])
+
+    # Test with origin_at_center=True (rotate around center)
+    disp_centered = vxf.affine_to_disp(affine, shape=shape, origin_at_center=True)
+
+    # Center point (1,1) should have zero displacement (stays in place)
+    assert torch.allclose(disp_centered[1, 1], torch.zeros(2), atol=1e-6), \
+        f"Center should be fixed during rotation, got {disp_centered[1, 1]}"
+
+    # Test with origin_at_center=False (rotate around corner)
+    disp_corner = vxf.affine_to_disp(affine, shape=shape, origin_at_center=False)
+
+    # Corner (0,0) should have zero displacement
+    assert torch.allclose(disp_corner[0, 0], torch.zeros(2), atol=1e-6), \
+        f"Corner should be fixed during rotation, got {disp_corner[0, 0]}"
+
+    # The two should be dramatically different for rotation
+    assert not torch.allclose(disp_centered, disp_corner), \
+        "Rotation around center vs corner should produce very different results"
+
+
+def test_compose_affines_analytical():
+    """
+    Test compose() validates T(x) = A(B(x)) behavior with non-commuting transforms.
+
+    Uses rotation and translation which don't commute to clearly test order.
+    For compose([A, B]), should apply B first, then A, giving matrix A @ B.
+    """
+    # A: 90-degree counter-clockwise rotation
+    A = torch.tensor([[0., -1., 0.],
+                      [1., 0., 0.]])
+
+    # B: translation by (2, 0)
+    B = torch.tensor([[1., 0., 2.],
+                      [0., 1., 0.]])
+
+    # Compose A and B
+    composed = vxf.compose([A, B])
+
+    # Expected: A @ B (apply B first, then A)
+    expected_affine = torch.tensor([[0., -1., 0.],
+                                    [1., 0., 2.]])
+
+    assert torch.allclose(composed, expected_affine, atol=1e-6), \
+        f"Expected {expected_affine}, got {composed}"
+
+    # Verify this is NOT B @ A (opposite order)
+    wrong_order = torch.tensor([[0., -1., 2.],
+                                [1., 0., 0.]])
+    assert not torch.allclose(composed, wrong_order), \
+        "compose([A, B]) should not be B @ A"
+
+    # Test point transformation: apply B first (translate), then A (rotate)
+    test_point = torch.tensor([1., 0., 1.])
+    result = composed @ test_point
+    expected_result = torch.tensor([0., 3.])
+
+    assert torch.allclose(result, expected_result, atol=1e-6), \
+        f"Point transformation failed: expected {expected_result}, got {result}"
 
 
 def test_grid_coordinates_xy_indexing():
