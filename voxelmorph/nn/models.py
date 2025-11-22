@@ -51,10 +51,9 @@ class VxmPairwise(nn.Module):
         The order of operations in each UNet block. Default is `'ca'`.
     final_activation : Union[str, nn.Module, None], optional
         The activation applied to the final output of the network. Default is `None`.
-    flow_initializer : ne.random.Sampler, optional
-        A custom sampler for initializing the weights of the flow layer.
-        If not provided, it defaults to a normal distribution
-        with mean 0 and standard deviation `1e-5`.
+    flow_initializer : float, optional
+        Standard deviation for initializing the flow layer weights with a
+        normal distribution (mean=0). Default is `1e-5`.
     integration_steps : int, optional
         Number of steps to take in integrating the flow field. Default is 5.
     **kwargs : dict
@@ -85,7 +84,7 @@ class VxmPairwise(nn.Module):
         activations: Union[List[Union[Callable, str]], Callable, str, None] = nn.ReLU,
         order: str = 'ca',
         final_activation: Union[str, nn.Module, None] = None,
-        flow_initializer: Union[float, ne.samplers.Sampler] = ne.samplers.Normal(0, 1e-5),
+        flow_initializer: float = 1e-5,
         integration_steps: int = 5,
         resize_integrated_fields: bool = False,
         device: str = "cpu",
@@ -280,15 +279,15 @@ class VxmPairwise(nn.Module):
         self,
         ndim: int,
         features: int,
-        flow_initializer: Union[float, ne.samplers.Sampler] = ne.samplers.Normal(0, 1e-5)
+        flow_initializer: float = 1e-5
     ):
         """
-        Initialize the flow layer with custom weight initialization (by sampling
-        `flow_initializer`).
+        Initialize the flow layer with custom weight initialization.
 
         This layer is a convolutional block that produces a displacement (flow)
-        field. The weights of its initial convolution are sampled using the
-        provided flow_initializer, and biases are set to zero.
+        field. The weights of its initial convolution are initialized from a
+        normal distribution with mean=0 and std=flow_initializer, and biases
+        are set to zero.
 
         Parameters
         ----------
@@ -296,26 +295,19 @@ class VxmPairwise(nn.Module):
             **Spatial** dimensionality of the input (1, 2, or 3).
         features : int
             Number of input and output features for the flow layer.
-        flow_initializer :  Union[float, ne.random.Sampler], optional
-            Sampler for initializing the *weights* of the flow layer. Default is
-            `ne.random.Normal(0, 1e-5)`.
+        flow_initializer : float, optional
+            Standard deviation for initializing the flow layer weights with a
+            normal distribution (mean=0). Default is `1e-5`.
         """
 
         # Initialize the conv ("flow") layer with congruent in and out features
         flow_layer = ne.nn.modules.ConvBlock(ndim, features, features).to(self.device)
 
-        # Optionally, apply custom initialization if `flow_initializer`` is provided
+        # Apply custom initialization using PyTorch's native init
         if flow_initializer is not None:
-
-            # Make the distribution to sample the flow parameters
-            flow_initializer = ne.samplers.Fixed.make(flow_initializer)
-
-            # Sample the weight parameters from the distribution for first (and only) conv
+            # Initialize weights from Normal(mean=0, std=flow_initializer)
             with torch.no_grad():
-                flow_layer.conv0.weight.copy_(
-                    flow_initializer(flow_layer.conv0.weight.shape)
-                    .to(flow_layer.conv0.weight.device)
-                )
+                torch.nn.init.normal_(flow_layer.conv0.weight, mean=0.0, std=flow_initializer)
                 # Set the bias term(s) to zero for the first (and only) conv
                 if flow_layer.conv0.bias is not None:
                     flow_layer.conv0.bias.zero_()

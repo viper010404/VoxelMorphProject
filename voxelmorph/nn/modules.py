@@ -287,7 +287,7 @@ class ResizeDisplacementField(nn.Module):
 
     def __init__(
         self,
-        scale_factor: Optional[Union[float, int, ne.samplers.Sampler]] = 1.0,
+        scale_factor: Optional[Union[float, int]] = 1.0,
         interpolation_mode: str = "bilinear",
         align_corners: bool = True,
     ):
@@ -296,10 +296,10 @@ class ResizeDisplacementField(nn.Module):
 
         Parameters
         ----------
-        scale_factor : Optional[Union[float, int, Sampler]], optional
+        scale_factor : Optional[Union[float, int]], optional
             Factor by which to stretch or shrink the spatial dimensions of the displacement field.
             Values of `scale_factor` > 1 stretch/expand the field, and values < 1 shrink it. By
-            default None.
+            default 1.0.
         interpolation_mode : str
             Algorithm used for interpolating the warped image. Default is  'bilinear'. Options are:
             'bilinear' | 'nearest' | 'bicubic', 'trilinear'.
@@ -309,7 +309,7 @@ class ResizeDisplacementField(nn.Module):
         super().__init__()
         self.interpolation_mode = interpolation_mode
         self.align_corners = align_corners
-        self.scale_factor = ne.samplers.Fixed.make(scale_factor)
+        self.scale_factor = scale_factor
 
     def forward(self, disp: torch.Tensor) -> torch.Tensor:
         """
@@ -327,12 +327,10 @@ class ResizeDisplacementField(nn.Module):
             Resized displacement field.
         """
 
-        # Sample from the scaling sampler. If type Fixed, just get the fixed value!
-        scale_factor = self.scale_factor()
-
+        # Use the scale factor to resize the displacement field
         resized_disp = nnf.interpolate(
-            disp * scale_factor,  # Scale the magnitudes of the displacement field
-            scale_factor=scale_factor,
+            disp * self.scale_factor,  # Scale the magnitudes of the displacement field
+            scale_factor=self.scale_factor,
             mode=self.interpolation_mode,
             align_corners=self.align_corners,
         )
