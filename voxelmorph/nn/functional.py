@@ -19,7 +19,7 @@ __all__ = [
     "integrate_disp",
     "angles_to_rotation_matrix",
     "compose",
-    "compose_affine",
+    "params_to_affine",
     "gaussian_kernel_1d",
     "gaussian_blur",
     "smooth_gaussian",
@@ -344,7 +344,7 @@ def angles_to_rotation_matrix(
     return matrix.to(rotation.device)
 
 
-def compose_affine(
+def params_to_affine(
     ndim: int,
     translation: Tensor = None,
     rotation: Tensor = None,
@@ -764,7 +764,7 @@ def random_affine(
         scale = np.array(max_scaling * ndim)
 
     # compose from random paramters
-    aff = compose_affine(
+    aff = params_to_affine(
         ndim=ndim,
         translation=translation,
         rotation=rotation,

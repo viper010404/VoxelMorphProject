@@ -216,14 +216,14 @@ def test_angles_to_rotation_matrix_3d_90_degrees():
     assert torch.allclose(rotation_matrix, expected, atol=1e-5)
 
 
-def test_compose_affine_translation_shear():
+def test_params_to_affine_translation_shear():
     """
     Composing two translations should yield the sum of the two translations.
     """
 
     translation = (1, 2)
 
-    result_affine = vxf.compose_affine(
+    result_affine = vxf.params_to_affine(
         ndim=2,
         translation=translation,
         shear=9,
@@ -300,13 +300,13 @@ def test_affine_to_disp_scaling_2d():
     assert torch.allclose(disp, expected_disp, atol=1e-6), f"Expected {expected_disp}, got {disp}"
 
 
-def test_compose_affine_scaling():
+def test_params_to_affine_scaling():
     """
-    compose_affine with scaling should produce correct scaling matrix.
+    params_to_affine with scaling should produce correct scaling matrix.
     """
     scale_factors = (2.0, 3.0)
 
-    result_affine = vxf.compose_affine(
+    result_affine = vxf.params_to_affine(
         ndim=2,
         scale=scale_factors
     ).to(torch.float64)
@@ -320,14 +320,14 @@ def test_compose_affine_scaling():
     assert torch.allclose(result_affine, expected_affine, atol=1e-5)
 
 
-def test_compose_affine_shearing_2d():
+def test_params_to_affine_shearing_2d():
     """
-    compose_affine with shearing should produce correct shear matrix.
+    params_to_affine with shearing should produce correct shear matrix.
     """
 
     # Make an affine with shear
     shear_value = 0.5
-    result_affine = vxf.compose_affine(
+    result_affine = vxf.params_to_affine(
         ndim=2,
         shear=shear_value
     ).to(torch.float64)
@@ -341,13 +341,13 @@ def test_compose_affine_shearing_2d():
     assert torch.allclose(result_affine, expected_affine, atol=1e-5)
 
 
-def test_compose_affine_shearing_3d():
+def test_params_to_affine_shearing_3d():
     """
-    compose_affine with 3D shearing should produce correct shear matrix.
+    params_to_affine with 3D shearing should produce correct shear matrix.
     """
     shear_values = (0.5, 0.3, 0.7)
 
-    result_affine = vxf.compose_affine(
+    result_affine = vxf.params_to_affine(
         ndim=3,
         shear=shear_values
     ).to(torch.float64)
@@ -378,7 +378,7 @@ def test_spatial_transform_shearing():
     assert torch.allclose(out, img, atol=1e-6), f"Expected {img}, got {out}"
 
 
-def test_compose_affine_complex_2d():
+def test_params_to_affine_complex_2d():
     """
     Test complex composed affine with known expected result.
     """
@@ -387,7 +387,7 @@ def test_compose_affine_complex_2d():
     scale = (1.5, 2.0)
     shear = 0.3
 
-    result_affine = vxf.compose_affine(
+    result_affine = vxf.params_to_affine(
         ndim=2,
         translation=translation,
         rotation=rotation,
@@ -579,7 +579,7 @@ def test_affine_to_disp_origin_at_center_rotation():
         "Rotation around center vs corner should produce very different results"
 
 
-def test_compose_affines_analytical():
+def test_params_to_affine_analytical():
     """
     Test compose() validates T(x) = A(B(x)) behavior with non-commuting transforms.
 
