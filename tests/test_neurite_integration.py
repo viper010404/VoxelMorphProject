@@ -5,7 +5,6 @@ Tests critical Neurite components that VoxelMorph depends on:
 - BasicUNet (model backbone)
 - volshape_to_ndgrid (grid generation)
 - ConvBlock (flow layer)
-- Samplers (weight initialization)
 """
 
 import pytest
@@ -157,30 +156,3 @@ def test_conv_block_forward_3d(shape_3d):
 
     assert output.shape == (1, 3, *shape_3d)
     assert output.requires_grad is True
-
-
-def test_normal_sampler_callable(shape_3d):
-    """Test Normal sampler is callable and produces samples."""
-    sampler = ne.samplers.Normal(0, 1)
-    samples = sampler(shape_3d)
-
-    assert samples.shape == shape_3d
-    assert torch.abs(samples.mean()) < 0.01
-
-
-def test_fixed_sampler_make(shape_3d):
-    """Test Fixed.make() wraps scalar values correctly."""
-    value = 0.5
-    sampler = ne.samplers.Fixed.make(value)
-    samples = sampler(shape_3d)
-
-    assert (samples == torch.ones(shape_3d) * value).all()
-
-
-def test_sampler_callable_protocol():
-    """Test samplers are callable."""
-    normal_sampler = ne.samplers.Normal(0, 1e-5)
-    fixed_sampler = ne.samplers.Fixed.make(1.0)
-
-    assert callable(normal_sampler)
-    assert callable(fixed_sampler)
