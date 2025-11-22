@@ -140,53 +140,6 @@ def affine_to_disp(
     return disp
 
 
-def grid_coordinates(
-    shape: Sequence[int],
-    indexing: Optional[Literal['ij', 'xy']] = 'ij',
-    dtype: Optional[torch.dtype] = torch.float32,
-    device: Optional[torch.device] = None
-) -> Tensor:
-    """
-    Generates a grid of coordinates with the specified spatial shape.
-
-    Parameters
-    ----------
-    shape : tuple of int
-        The spatial shape of the grid to generate.
-    indexing : {'ij', 'xy'}, optional
-        The indexing convention to use. 'ij' for matrix indexing, 'xy' for Cartesian
-        indexing. Default is 'ij'.
-    dtype : torch.dtype, optional
-        The desired data type of the output tensor. Default is torch.float32.
-    device : torch.device, optional
-        The device on which to create the tensor. Default is None, which uses the
-        current device.
-
-    Returns
-    -------
-    torch.Tensor
-        A tensor of shape (*shape, len(shape)) containing the grid coordinates.
-
-    Examples
-    --------
-    >>> grid_coordinates((2, 3))
-    tensor([[[0., 0.],
-             [0., 1.],
-             [0., 2.]],
-            [[1., 0.],
-             [1., 1.],
-             [1., 2.]]])
-    >>> grid_coordinates((1, 2, 2), device=torch.device('cuda:0'))
-    tensor([[[[0., 0., 0.],
-               [0., 0., 1.]],
-              [[0., 1., 0.],
-               [0., 1., 1.]]]], device='cuda:0')
-    """
-    ranges = [torch.arange(s, dtype=dtype, device=device) for s in shape]
-    meshgrid = torch.stack(torch.meshgrid(*ranges, indexing=indexing), dim=-1)
-    return meshgrid
-
-
 def spatial_transform(
     image: Tensor,
     trf: Tensor,
