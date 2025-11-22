@@ -46,5 +46,6 @@ if curv is None or version.parse(curv) < version.parse(minv):
 
 from . import nn
 from . import py
+from .functional import *
 
 __all__ = ['nn', 'py']
