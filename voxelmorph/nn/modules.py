@@ -3,7 +3,8 @@ Neural network building blocks for VoxelMorph.
 """
 
 # Standard library imports
-from typing import Tuple, Union, Optional
+from collections.abc import Sequence
+from typing import Union, Optional
 
 # Third-party imports
 import torch
@@ -11,7 +12,6 @@ import torch.nn as nn
 import torch.nn.functional as nnf
 
 # Custom imports
-import neurite as ne
 import neurite.nn.functional as nef
 
 __all__ = [
@@ -38,7 +38,7 @@ class SpatialTransformer(nn.Module):
 
     def __init__(
         self,
-        size: Tuple[int],
+        size: Sequence[int],
         interpolation_mode: str = "bilinear",
         align_corners: bool = False,
         device: Union[str, torch.device] = "cpu",
