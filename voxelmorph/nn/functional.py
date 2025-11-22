@@ -10,10 +10,10 @@ from typing import List, Union, Optional, Sequence, Literal
 import torch
 from torch import Tensor
 import numpy as np
+import neurite.nn.functional as nef
 
 __all__ = [
     "affine_to_disp",
-    "grid_coordinates",
     "spatial_transform",
     "disp_to_coords",
     "integrate_disp",
@@ -69,11 +69,12 @@ def affine_to_disp(
     Examples
     --------
     >>> # Basic usage with pre-computed meshgrid
+    >>> import neurite.nn.functional as nef
     >>> affine = torch.tensor(
     >>> ... [[1., 0., 5.],
     >>> ... [0., 1., 3.]]
     >>> )
-    >>> grid = grid_coordinates((64, 64))
+    >>> grid = nef.volshape_to_ndgrid((64, 64), stack=True)
     >>> disp = affine_to_disp(affine, meshgrid=grid)
 
     >>> # Using shape parameter instead
@@ -86,7 +87,9 @@ def affine_to_disp(
     if meshgrid is None:
         if shape is None:
             raise ValueError("Either `meshgrid` or `shape` must be provided")
-        meshgrid = grid_coordinates(shape, device=affine.device, dtype=affine.dtype)
+        meshgrid = nef.volshape_to_ndgrid(
+            size=shape, device=affine.device, dtype=affine.dtype, stack=True
+        )
 
     ndim = meshgrid.shape[-1]
     spatial_shape = meshgrid.shape[:-1]
@@ -200,7 +203,9 @@ def spatial_transform(
 
     if trf.ndim == 2:
         if meshgrid is None:
-            meshgrid = grid_coordinates(image.shape[1:], device=image.device)
+            meshgrid = nef.volshape_to_ndgrid(
+                size=image.shape[1:], device=image.device, stack=True
+            )
 
         trf = torch.linalg.inv(trf)
         trf = affine_to_disp(
@@ -255,7 +260,9 @@ def disp_to_coords(disp, meshgrid=None) -> Tensor:
         The absolute crs field scaled to range [-1, 1].
     """
     if meshgrid is None:
-        meshgrid = grid_coordinates(disp.shape[:-1], device=disp.device)
+        meshgrid = nef.volshape_to_ndgrid(
+            size=disp.shape[:-1], device=disp.device, stack=True
+        )
 
     shape = disp.shape[:-1]
     ndim = disp.shape[-1]
@@ -285,7 +292,9 @@ def integrate_disp(
     """
     if meshgrid is None:
         # generate a crs grid
-        meshgrid = grid_coordinates(disp.shape[:-1], device=disp.device)
+        meshgrid = nef.volshape_to_ndgrid(
+            size=disp.shape[:-1], device=disp.device, stack=True
+        )
 
     if steps == 0:
         return disp
@@ -778,7 +787,9 @@ def coords_to_disp(coords, meshgrid=None) -> Tensor:
     TODOC
     """
     if meshgrid is None:
-        meshgrid = grid_coordinates(coords.shape[:-1], device=coords.device)
+        meshgrid = nef.volshape_to_ndgrid(
+            size=coords.shape[:-1], device=coords.device, stack=True
+        )
 
     raise NotImplementedError(
         'coords_to_disp is not yet implemented. '
@@ -825,7 +836,7 @@ def random_transform(
     if chance(affine_probability):
 
         # compute meshgrid, it is the target crs
-        meshgrid = grid_coordinates(shape, device=device)
+        meshgrid = nef.volshape_to_ndgrid(size=shape, device=device, stack=True)
 
         # convert max_translation from mm to voxel
         # the matrix returned from random_affine() is vox2vox rotating around the image center.
