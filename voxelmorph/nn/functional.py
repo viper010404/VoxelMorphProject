@@ -1183,12 +1183,13 @@ def compose(
         return transforms[0]
 
     # Convert all to tensors with floating point dtype
-    transforms = [
-        t.float() if isinstance(t, Tensor) and not t.is_floating_point()
-        else torch.as_tensor(t, dtype=torch.float32) if not isinstance(t, Tensor)
-        else t
-        for t in transforms
-    ]
+    safe_transforms = []
+    for transform in transforms:
+        if isinstance(transform, Tensor) and not transform.is_floating_point():
+            transform = transform.float()
+        elif not isinstance(transform, Tensor):
+            transform = torch.as_tensor(transform, dtype=torch.float32)
+        safe_transforms.append(transform)
 
     # Start from the rightmost transform (last to be applied)
     curr = transforms[-1]
