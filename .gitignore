@@ -36,3 +36,6 @@ data/*
 .claude/*
 CLAUDE.md
 TODOs
+voxelmorph-sandbox/
+th_*
+uv.lock
