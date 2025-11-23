@@ -190,3 +190,139 @@ def disp_to_coords(
     coords = coords.flip(-1)
 
     return coords
+
+
+def spatial_transform(
+    image: torch.Tensor,
+    trf: Union[torch.Tensor, None],
+    mode: Literal['linear', 'nearest'] = 'linear',
+    isdisp: bool = True,
+    meshgrid: Union[torch.Tensor, None] = None,
+    origin_at_center: bool = True,
+    non_spatial_dims: Union[Tuple[int, ...], None] = None,
+    align_corners: bool = True
+) -> torch.Tensor:
+    """
+    Apply spatial transformation to image using displacement or coordinate field.
+
+    Shape-agnostic implementation that works with any tensor dimensionality.
+
+    Parameters
+    ----------
+    image : torch.Tensor
+        Input image to transform. Shape depends on non_spatial_dims:
+        - (*spatial,) if non_spatial_dims=None
+        - (C, *spatial) if non_spatial_dims=(0,)
+        - (B, C, *spatial) if non_spatial_dims=(0, 1)
+    trf : torch.Tensor or None
+        Transformation field. Can be:
+        - Affine matrix: shape (N+1, N+1) or (N, N+1)
+        - Displacement field: shape (*spatial, N)
+        - Coordinate field: shape (*spatial, N)
+        - None: returns image unchanged
+    mode : {'linear', 'nearest'}, default='linear'
+        Interpolation mode. 'linear' will auto-detect appropriate mode
+        (bilinear/trilinear) based on spatial dimensionality.
+    isdisp : bool, default=True
+        If True, treat trf as displacement field and convert to coordinates.
+        If False, treat trf as normalized coordinates ready for grid_sample.
+    meshgrid : torch.Tensor or None, default=None
+        Pre-computed coordinate grid. If None, computed from image shape.
+    origin_at_center : bool, default=True
+        Place origin at image center when converting affine matrices to displacement.
+    non_spatial_dims : Tuple[int, ...] or None, default=None
+        Which dimensions of image are non-spatial:
+        - None: pure spatial tensor
+        - (0,): first dimension is non-spatial (e.g., channel)
+        - (0, 1): first two dimensions are non-spatial (e.g., batch, channel)
+    align_corners : bool, default=True
+        Align corners parameter for grid_sample.
+
+    Returns
+    -------
+    torch.Tensor
+        Transformed image with same shape as input.
+
+    Examples
+    --------
+    >>> # Pure spatial image (H, W)
+    >>> image = torch.randn(64, 64)
+    >>> disp = torch.randn(64, 64, 2)
+    >>> warped = spatial_transform(image, disp)
+    >>> warped.shape
+    torch.Size([64, 64])
+
+    >>> # Image with channel dimension (C, H, W)
+    >>> image = torch.randn(3, 64, 64)
+    >>> disp = torch.randn(64, 64, 2)
+    >>> warped = spatial_transform(image, disp, non_spatial_dims=(0,))
+    >>> warped.shape
+    torch.Size([3, 64, 64])
+
+    >>> # Image with batch and channel (B, C, H, W)
+    >>> image = torch.randn(2, 3, 64, 64)
+    >>> disp = torch.randn(64, 64, 2)
+    >>> warped = spatial_transform(image, disp, non_spatial_dims=(0, 1))
+    >>> warped.shape
+    torch.Size([2, 3, 64, 64])
+    """
+    if trf is None:
+        return image
+
+    # Parse non-spatial dimensions
+    num_non_spatial, num_spatial = _parse_non_spatial_dims(non_spatial_dims, image.ndim)
+
+    # Handle affine matrix input
+    if trf.ndim == 2:
+        if meshgrid is None:
+            spatial_shape = image.shape[num_non_spatial:]
+            meshgrid = ne.volshape_to_ndgrid(size=spatial_shape, device=image.device, stack=True)
+
+        trf = torch.linalg.inv(trf)
+        trf = affine_to_disp(trf, meshgrid=meshgrid, origin_at_center=origin_at_center)
+        isdisp = True
+
+    # Convert displacement to coordinates if needed
+    if isdisp:
+        trf = disp_to_coords(trf, meshgrid=meshgrid)
+
+    # Infer interpolation mode for 'linear'
+    if mode == 'linear':
+        mode = ne.utils.infer_linear_interpolation_mode(num_spatial)
+
+    # Handle non-floating point images
+    reset_type = None
+    if not torch.is_floating_point(image):
+        if mode == 'nearest':
+            reset_type = image.dtype
+        image = image.type(torch.float32)
+
+    # Add dimensions to image to get (B, C, *spatial) format for grid_sample
+    dims_to_add = 2 - num_non_spatial
+    for _ in range(dims_to_add):
+        image = image.unsqueeze(0)
+
+    # Determine if coordinates have batch dimension
+    # Coordinates end with (*spatial, ndim), might have batch at front
+    # If trf has ndim == num_spatial + 1, it's pure spatial (*spatial, ndim)
+    # If trf has ndim > num_spatial + 1, it has batch dimension(s)
+    coord_has_batch = trf.ndim > (num_spatial + 1)
+
+    # Add batch dimension to coordinates if needed to match image
+    if not coord_has_batch:
+        trf = trf.unsqueeze(0)
+
+    # Apply transformation using grid_sample
+    transformed = torch.nn.functional.grid_sample(
+        image, trf, align_corners=align_corners, mode=mode
+    )
+
+    # Remove added dimensions from result
+    for _ in range(dims_to_add):
+        transformed = transformed.squeeze(0)
+
+    # Restore original dtype if needed
+    if reset_type is not None:
+        transformed = transformed.type(reset_type)
+
+    return transformed
