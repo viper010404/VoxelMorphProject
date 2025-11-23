@@ -379,7 +379,7 @@ def test_disp_to_coords_zero_disp():
     """
     # Create a zero displacement field
     disp = torch.zeros(2, 2, 2, dtype=torch.float32)
-    coords = vxf.disp_to_coords(disp)
+    coords = vxm.disp_to_coords(disp)
 
     # Check shape
     assert coords.shape == (2, 2, 2)
@@ -600,8 +600,7 @@ def test_spatial_transform_different_dtypes():
     img_int = torch.randint(0, 10, (1, 3, 3), dtype=torch.int32)
     affine = torch.eye(3, dtype=torch.float32)
 
-    # Use shape-agnostic function: (1, 3, 3) = (C=1, H=3, W=3)
-    out_int = vxm.functional.spatial_transform(
+    out_int = vxm.spatial_transform(
         img_int,
         affine,
         mode='nearest',
@@ -623,7 +622,7 @@ def test_disp_to_coords_axis_flip():
     disp[1, 1, 1] = 2.0  # Move second pixel
 
     # Convert to coordinates
-    coords = vxf.disp_to_coords(disp)
+    coords = vxm.disp_to_coords(disp)
 
     # The coordinates should be flipped compared to the displacement
     # This verifies that the flip(-1) operation is working correctly

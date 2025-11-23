@@ -11,6 +11,7 @@ import neurite.nn.functional as nef
 __all__ = [
     'affine_to_disp',
     'disp_to_coords',
+    'spatial_transform',
     'integrate_disp',
 ]
 
