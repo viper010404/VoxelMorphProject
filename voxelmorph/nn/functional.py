@@ -92,113 +92,158 @@ def spatial_transform(
     )
 
 
-def smooth_gaussian(shape, sigma, magnitude=1.0, device=None, method='blur'):
+def smooth_gaussian(
+    shape: Sequence[int],
+    sigma: float,
+    magnitude: float = 1.0,
+    device: Union[torch.device, None] = None,
+    method: Literal['blur', 'upsample'] = 'blur'
+) -> Tensor:
     """
-    Generates a smooth Gaussian noise image.
+    Generate smooth Gaussian noise in (B, C, *spatial) format.
 
     Parameters
     ----------
-    shape : List[int]
-        The desired shape of the output tensor. Can be 2D or 3D.
+    shape : Sequence[int]
+        Desired shape of output tensor in (B, C, *spatial). Must have at least 3 dimensions
+        (batch, channel, and spatial). Examples: (1, 1, 64, 64) for 2D, (2, 3, 64, 64, 64) for 3D.
     sigma : float
-        The spatial smoothing sigma in voxel coordinates.
-    magnitude : float
-        The standard deviation of the noise.
-    device : torch.device or None, optional
-        The device on which the output tensor is allocated. If None, defaults to CPU.
-    method : 'blur' or 'upsample'
-        Method for noise generation. Upsampling is much faster and more memory efficient
-        for larger sigma values, but at the cost of quality.
+        Spatial smoothing sigma in voxel coordinates.
+    magnitude : float, default=1.0
+        Standard deviation of the noise after normalization.
+    device : torch.device or None, default=None
+        Device for tensor allocation. If None, defaults to CPU.
+    method : {'blur', 'upsample'}, default='blur'
+        Noise generation method. 'upsample' is faster and more memory efficient for larger sigma
+        values, but at the cost of quality.
 
     Returns
     -------
     Tensor
-        A smooth Gaussian noise image of shape `shape`.
+        Smooth Gaussian noise with shape (B, C, *spatial).
+
+    Examples
+    --------
+    >>> # Generate 2D noise field
+    >>> noise_2d = smooth_gaussian(shape=(1, 1, 64, 64), sigma=3.0)
+    >>> noise_2d.shape
+    torch.Size([1, 1, 64, 64])
+
+    >>> # Generate 3D noise field with multiple channels
+    >>> noise_3d = smooth_gaussian(shape=(2, 3, 32, 32, 32), sigma=5.0, magnitude=2.0)
+    >>> noise_3d.shape
+    torch.Size([2, 3, 32, 32, 32])
+
+    >>> # Use upsample method for efficiency with large sigma
+    >>> noise_fast = smooth_gaussian(shape=(1, 1, 128, 128), sigma=10.0, method='upsample')
     """
+    spatial_shape = shape[2:]
+    ndim = len(spatial_shape)
+
     if method == 'blur':
         noise = torch.normal(0, 1, size=shape, device=device)
-        # Add batch and channel dimensions for neurite's gaussian_smoothing
-        noise = noise.unsqueeze(0).unsqueeze(0)
-        noise = nef.gaussian_smoothing(noise, sigma=sigma, truncate=3, padding_mode='same')
-        # Remove batch and channel dimensions
-        noise = noise.squeeze(0).squeeze(0)
+        noise = nef.gaussian_smoothing(noise, sigma=sigma, truncate=3)
+
     elif method == 'upsample':
-        downshape = tuple([max(int(s // sigma), 2) for s in shape])
-        noise = torch.normal(0, 1, size=(1, 1, *downshape), device=device)
-        mode = 'trilinear' if len(shape) == 3 else 'bilinear'
-        noise = torch.nn.functional.interpolate(noise, shape, mode=mode).view(shape)
+        # Compute downsampled shape for spatial dimensions only
+        downshape = tuple([max(int(s // sigma), 2) for s in spatial_shape])
+        # Generate downsampled noise with (B, C, *downsampled_spatial)
+        noise = torch.normal(0, 1, size=(*shape[:2], *downshape), device=device)
+        # Upsample to target spatial shape
+        mode = {1: 'linear', 2: 'bilinear', 3: 'trilinear'}[ndim]
+        noise = torch.nn.functional.interpolate(noise, size=spatial_shape, mode=mode)
+
     else:
         raise ValueError(f'unknown smooth gaussian method `{method}`')
 
-    # in-place normalize
+    # In-place normalize
     noise -= noise.mean()
     noise *= magnitude / noise.std()
     return noise
 
 
 def perlin(
-    shape,
-    smoothing: Union[float, List[float]] = None,
-    magnitude: Union[float, List[float]] = 1.0,
-    weights=None,
-    device=None,
-    method='blur'
-):
+    shape: Sequence[int],
+    smoothing: Union[float, List[float], None] = None,
+    magnitude: float = 1.0,
+    weights: Union[List[float], None] = None,
+    device: Union[torch.device, None] = None,
+    method: Literal['blur', 'upsample'] = 'blur'
+) -> Tensor:
     """
-    Generates a perlin noise image.
+    Generate Perlin noise in (B, C, *spatial) format.
 
     Parameters
     ----------
-    shape : List[int]
-        The desired shape of the output tensor. Can be 2D or 3D.
-    smoothing : float or List[float]
-        The spatial smoothing sigma(s) in voxel coordinates.
-    magnitude : float
-        The standard deviation of the noise.
-    weights : float or List[float]
-        The weights of the smoothing components (scales). If None, defaults
-        to monotonically increasing weights.
-    device : torch.device or None, optional
-        The device on which the output tensor is allocated. If None, defaults to CPU.
-    method : 'blur' or 'upsample'
-        Method for noise generation. Upsampling is much faster and more memory efficient
-        for larger sigma values, but at the cost of quality.
+    shape : Sequence[int]
+        Desired shape of output tensor in (B, C, *spatial) format. Must have at least 3
+        dimensions (batch, channel, and spatial). Examples: (1, 1, 64, 64) for 2D,
+        (2, 3, 64, 64, 64) for 3D.
+    smoothing : float, List[float], or None, default=None
+        Spatial smoothing sigma(s) in voxel coordinates for each scale. If None, defaults
+        to powers of 2 up to max spatial dimension. If scalar, reduces to single-scale
+        smooth_gaussian(). If list, each value defines a smoothing scale.
+    magnitude : float, default=1.0
+        Standard deviation of the final normalized noise.
+    weights : List[float] or None, default=None
+        Weight for each smoothing scale. If None, uses linearly increasing weights
+        [1, 2, 3, ...]. Length must match smoothing if both are lists.
+    device : torch.device or None, default=None
+        Device for tensor allocation. If None, defaults to CPU.
+    method : {'blur', 'upsample'}, default='blur'
+        Noise generation method. 'upsample' is faster and more memory efficient for
+        larger sigma values, but at the cost of quality.
 
     Returns
     -------
     Tensor
-        A Perlin noise image of shape `shape`.
-    """
-    if smoothing is None:
-        smoothing = 2 ** np.arange(np.log2(max(shape)))[1:]
+        Perlin noise with shape (B, C, *spatial).
 
+    Examples
+    --------
+    >>> # Generate 2D Perlin noise with default scales
+    >>> noise_2d = perlin(shape=(1, 1, 64, 64))
+    >>> noise_2d.shape
+    torch.Size([1, 1, 64, 64])
+
+    >>> # Generate 3D Perlin noise with custom smoothing scales
+    >>> noise_3d = perlin(shape=(1, 1, 32, 32, 32), smoothing=[2.0, 4.0, 8.0], magnitude=2.0)
+
+    >>> # Single-scale Perlin (equivalent to smooth_gaussian)
+    >>> noise_single = perlin(shape=(1, 1, 64, 64), smoothing=5.0)
+    """
+    spatial_shape = shape[2:]
+
+    # Default smoothing: powers of 2 up to max spatial dimension
+    if smoothing is None:
+        smoothing = 2 ** np.arange(np.log2(max(spatial_shape)))[1:]
+
+    # Single-scale case: delegate to smooth_gaussian
     elif np.isscalar(smoothing):
         return smooth_gaussian(
-            shape, smoothing, magnitude, device=device, method=method
+            shape=shape, sigma=smoothing, magnitude=magnitude, device=device, method=method
         )
 
+    # Multi-scale case: combine multiple smoothing levels
     if len(smoothing) == 1:
         weights = [None]
-
     elif weights is None:
         weights = np.arange(len(smoothing)) + 1
 
     noise = None
     for s, w in zip(smoothing, weights):
-
-        # generate smooth field
-        sample = smooth_gaussian(shape, s, device=device, method=method)
+        # Generate smooth field at this scale
+        sample = smooth_gaussian(shape=shape, sigma=s, device=device, method=method)
         if w is not None:
             sample *= w
 
-        # merge the noise at this scale with the rest
+        # Merge with accumulated noise
         if noise is None:
             noise = sample
-
         else:
             noise += sample
 
-    # in-place normalize
+    # In-place normalize
     noise -= noise.mean()
     noise *= magnitude / noise.std()
     return noise
@@ -215,19 +260,62 @@ def random_disp(
     perlin_method: str = 'upsample'
 ) -> Tensor:
     """
-    TODOC
-    """
+    Generate random displacement field using Perlin noise.
 
-    # Perlin can take a list so
+    Creates a displacement field by generating independent Perlin noise for each spatial
+    dimension and stacking them. The resulting field has shape (*spatial, ndim).
+
+    Parameters
+    ----------
+    shape : List[int]
+        Spatial shape of the displacement field (e.g., [64, 64] for 2D, [64, 64, 64] for 3D).
+    smoothing : float or List[float], default=10
+        Spatial smoothing sigma in voxel coordinates, divided by voxsize.
+    magnitude : float or List[float], default=10
+        Standard deviation of displacement in voxel coordinates, divided by voxsize.
+    integrations : int, default=0
+        Number of integration steps for diffeomorphic transform. If 0, no integration.
+    voxsize : float, default=1
+        Voxel size for scaling smoothing and magnitude parameters.
+    meshgrid : Tensor or None, default=None
+        Coordinate grid for integration. If None and integrations > 0, computed internally.
+    device : torch.device or None, default=None
+        Device for tensor allocation. If None, defaults to CPU.
+    perlin_method : str, default='upsample'
+        Noise generation method ('blur' or 'upsample').
+
+    Returns
+    -------
+    Tensor
+        Displacement field with shape (*spatial, ndim).
+
+    Examples
+    --------
+    >>> # Generate 2D displacement field
+    >>> disp_2d = random_disp(shape=[64, 64], smoothing=5.0, magnitude=3.0)
+    >>> disp_2d.shape
+    torch.Size([64, 64, 2])
+
+    >>> # Generate 3D displacement field with integration
+    >>> disp_3d = random_disp(shape=[32, 32, 32], integrations=5)
+    >>> disp_3d.shape
+    torch.Size([32, 32, 32, 3])
+    """
+    # Scale parameters by voxel size
     smoothing = smoothing / voxsize
     magnitude = magnitude / voxsize
 
-    # randomly sample a displacement crs field of the input shape
+    # Generate independent Perlin noise for each spatial dimension
     ndim = len(shape)
     disp = [
         perlin(
-            shape, smoothing, magnitude, method=perlin_method, device=device
-        ) for i in range(ndim)
+            shape=(1, 1, *shape),  # Add batch and channel dimensions
+            smoothing=smoothing,
+            magnitude=magnitude,
+            method=perlin_method,
+            device=device
+        ).squeeze(0).squeeze(0)  # Remove batch and channel dimensions
+        for i in range(ndim)
     ]
     disp = torch.stack(disp, dim=-1)
 
