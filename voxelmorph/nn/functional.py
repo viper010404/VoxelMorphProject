@@ -10,6 +10,7 @@ from typing import List, Union, Optional, Sequence, Literal
 import torch
 from torch import Tensor
 import numpy as np
+import neurite as ne
 import neurite.nn.functional as nef
 
 __all__ = [
@@ -25,7 +26,6 @@ __all__ = [
     "smooth_gaussian",
     "perlin",
     "random_disp",
-    "chance",
     "random_affine",
     "coords_to_disp",
     "random_transform",
@@ -652,25 +652,6 @@ def random_disp(
     return disp
 
 
-def chance(prob: float) -> bool:
-    """
-    Returns True with given probability.
-
-    Parameters
-    ----------
-    prob : float
-        Probability of returning True. Must be in the range [0, 1].
-
-    Returns
-    -------
-    bool
-        True with probability `prob`.
-    """
-    if prob < 0.0 or prob > 1.0:
-        raise ValueError(f'chance() expected a value in the range [0, 1], but got {prob}')
-    return np.random.rand() < prob
-
-
 def random_affine(
     ndim: int,
     max_translation: float = 0,
@@ -785,7 +766,7 @@ def random_transform(
     trf = None
 
     # generate a random affine
-    if chance(affine_probability):
+    if ne.utils.bernoulli(p=affine_probability, shape=(1,)).item():
 
         # compute meshgrid, it is the target crs
         meshgrid = nef.volshape_to_ndgrid(size=shape, device=device, stack=True)
@@ -805,7 +786,7 @@ def random_transform(
         trf = affine_to_disp(matrix, meshgrid)
 
     # generate a nonlinear transform
-    if chance(warp_probability):
+    if ne.utils.bernoulli(p=warp_probability, shape=(1,)).item():
         disp = random_disp(
             shape=shape,
             smoothing=np.random.uniform(*warp_smoothing_range),
