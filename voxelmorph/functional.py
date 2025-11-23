@@ -335,7 +335,6 @@ def integrate_disp(
     TODOC
     """
     if meshgrid is None:
-        # generate a crs grid
         meshgrid = ne.volshape_to_ndgrid(size=disp.shape[:-1], device=disp.device, stack=True)
 
     if steps == 0:

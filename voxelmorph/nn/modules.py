@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as nnf
 
 # Custom imports
+import neurite as ne
 import neurite.nn.functional as nef
 
 __all__ = [
@@ -66,7 +67,7 @@ class SpatialTransformer(nn.Module):
         self.align_corners = align_corners
 
         # Make identity grid, used to create absolute grid location from displacement
-        identity_grid = nef.volshape_to_ndgrid(size=size, device=device, stack=True)
+        identity_grid = ne.volshape_to_ndgrid(size=size, device=device, stack=True)
         identity_grid = identity_grid.unsqueeze(0)  # Add batch dimension
 
         # convert to grid_sample axis convention. Size is |Z|Y|X| for 3D, |Y|X| for 2D

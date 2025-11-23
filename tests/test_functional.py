@@ -7,6 +7,7 @@ import torch
 
 import voxelmorph as vxm
 import voxelmorph.nn.functional as vxf
+import neurite as ne
 import neurite.nn.functional as nef
 
 
@@ -15,7 +16,7 @@ def test_affine_to_disp_identity():
     Identity affine should produce zero displacement everywhere.
     """
     shape = (3, 4)
-    grid = nef.volshape_to_ndgrid(size=shape, stack=True)
+    grid = ne.volshape_to_ndgrid(size=shape, stack=True)
     ndim = len(shape)
 
     # Identity affine
@@ -41,7 +42,7 @@ def test_affine_to_disp_translation():
     Pure translation affine should yield a constant field = translation.
     """
     shape = (2, 2)
-    grid = nef.volshape_to_ndgrid(size=shape, stack=True)
+    grid = ne.volshape_to_ndgrid(size=shape, stack=True)
     ndim = len(shape)
     tx, ty = 2.0, 3.0
 
@@ -76,7 +77,7 @@ def test_disp_to_coords_zero_disp_2d():
     (col, row).
     """
     disp = torch.zeros(2, 3, 2, dtype=torch.float32)
-    coords = vxf.disp_to_coords(disp)
+    coords = vxm.functional.disp_to_coords(disp)
 
     # For shape=(2,3):
     #  row indices i \isin {0, 1} -> bounded on [-1, 1] with 2 elements -> [-1, 1]
@@ -233,7 +234,7 @@ def test_affine_to_disp_scaling_2d():
     """
     # Use a simple 2x2 grid for easier calculation
     shape = (2, 2)
-    grid = nef.volshape_to_ndgrid(size=shape, stack=True)
+    grid = ne.volshape_to_ndgrid(size=shape, stack=True)
     ndim = len(shape)
 
     # Simple 2x scaling in both directions, centered around origin
@@ -453,7 +454,7 @@ def test_affine_to_disp_large_translation():
     affine_to_disp should handle large translations correctly.
     """
     shape = (3, 3)
-    grid = nef.volshape_to_ndgrid(size=shape, stack=True)
+    grid = ne.volshape_to_ndgrid(size=shape, stack=True)
     ndim = len(shape)
 
     # Large translation
