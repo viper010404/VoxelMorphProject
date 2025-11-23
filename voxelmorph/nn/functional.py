@@ -17,7 +17,6 @@ import voxelmorph as vxm
 
 __all__ = [
     "spatial_transform",
-    "integrate_disp",
     "angles_to_rotation_matrix",
     "compose",
     "params_to_affine",
@@ -93,28 +92,6 @@ def spatial_transform(
         non_spatial_dims=(0, 1),
         align_corners=True
     )
-
-
-def integrate_disp(
-    disp: Tensor,
-    steps: int,
-    meshgrid: Union[Tensor, None] = None
-) -> Tensor:
-    """
-    TODOC
-    """
-    if meshgrid is None:
-        # generate a crs grid
-        meshgrid = nef.volshape_to_ndgrid(size=disp.shape[:-1], device=disp.device, stack=True)
-
-    if steps == 0:
-        return disp
-
-    disp = disp / (2 ** steps)
-    for _ in range(steps):
-        disp += spatial_transform(disp.movedim(-1, 0), disp, meshgrid=meshgrid).movedim(0, -1)
-
-    return disp
 
 
 def angles_to_rotation_matrix(
@@ -394,7 +371,7 @@ def random_disp(
     disp = torch.stack(disp, dim=-1)
 
     if integrations > 0:
-        disp = integrate_disp(disp, integrations, meshgrid)
+        disp = vxm.functional.integrate_disp(disp, integrations, meshgrid)
 
     return disp
 
@@ -547,12 +524,14 @@ def random_transform(
         if trf is None:
             trf = disp
         else:
-            trf += spatial_transform(disp.movedim(-1, 0), trf, meshgrid=meshgrid).movedim(0, -1)
+            trf += vxm.functional.spatial_transform(
+                disp.movedim(-1, 0), trf, meshgrid=meshgrid, non_spatial_dims=(0,)
+            ).movedim(0, -1)
 
     # convert to coordinates if specified
     if trf is not None and not isdisp:
         # compute the absolute crs field scaled to range [-1, 1]
-        trf = disp_to_coords(trf)
+        trf = vxm.functional.disp_to_coords(trf)
 
     return trf
 
@@ -814,11 +793,12 @@ def compose(
             ndim = next_trf.shape[-1]
             next_trf_permuted = next_trf.permute(-1, *range(ndim))  # (*spatial, N) -> (N, *spatial)
 
-            warped = spatial_transform(
+            warped = vxm.functional.spatial_transform(
                 image=next_trf_permuted,
                 trf=curr,
-                method=interpolation_mode,
-                isdisp=True
+                mode=interpolation_mode,
+                isdisp=True,
+                non_spatial_dims=(0,)
             )
 
             # Permute back: (N, *spatial) -> (*spatial, N)

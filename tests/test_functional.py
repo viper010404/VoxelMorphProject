@@ -403,7 +403,7 @@ def test_integrate_disp_zero_steps():
     integrate_disp with zero steps should return the original displacement.
     """
     disp = torch.randn(2, 3, 2, dtype=torch.float32)
-    integrated = vxf.integrate_disp(disp, steps=0)
+    integrated = vxm.functional.integrate_disp(disp, steps=0)
 
     assert torch.allclose(integrated, disp)
 
@@ -413,7 +413,7 @@ def test_integrate_disp_single_step():
     integrate_disp with one step should apply spatial transform once.
     """
     disp = torch.randn(2, 3, 2, dtype=torch.float32)
-    integrated = vxf.integrate_disp(disp, steps=1)
+    integrated = vxm.functional.integrate_disp(disp, steps=1)
 
     # Should have same shape
     assert integrated.shape == disp.shape

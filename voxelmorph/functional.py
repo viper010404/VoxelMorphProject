@@ -8,6 +8,12 @@ import torch
 import neurite as ne
 import neurite.nn.functional as nef
 
+__all__ = [
+    'affine_to_disp',
+    'disp_to_coords',
+    'integrate_disp',
+]
+
 
 def affine_to_disp(
     affine: torch.Tensor,
@@ -22,7 +28,7 @@ def affine_to_disp(
     Parameters
     ----------
     affine : Tensor
-        Affine transformation matrix of shape (..., N, N+1) or (..., N+1, N+1).
+        Affine transformation matrix of shape (N, N+1) or (N+1, N+1).
         Expected to be a vox2vox target-to-source transformation.
     meshgrid : Tensor, optional
         Pre-computed meshgrid tensor of shape (*spatial_shape, N), where N is the spatial
@@ -34,18 +40,18 @@ def affine_to_disp(
         Spatial shape (N dimensions) to create meshgrid if `meshgrid` is not provided.
         Required if `meshgrid` is None.
     warp_right : Tensor, optional
-        Right-compose the affine with this displacement field of shape (..., *spatial_shape, N).
+        Right-compose the affine with this displacement field of shape (*spatial_shape, N).
         Computes affine(x + warp_right(x)) - x. Useful for composing transforms.
 
     Returns
     -------
     Tensor
-        Displacement field of shape (..., *spatial_shape, N).
+        Displacement field of shape (*spatial_shape, N).
 
     Examples
     --------
     >>> # Basic usage with pre-computed meshgrid
-    >>> import neurite.nn.functional as nef
+    >>> import neurite as ne
     >>> affine = torch.tensor(
     >>> ... [[1., 0., 5.],
     >>> ... [0., 1., 3.]]
@@ -64,10 +70,11 @@ def affine_to_disp(
         if shape is None:
             raise ValueError("Either `meshgrid` or `shape` must be provided")
 
-        meshgrid = ne.volshape_to_ndgrid(
+        meshgrid = ne.volshape_to_ndgrid(                           # (*spatial, ndim)
             size=shape, device=affine.device, dtype=affine.dtype, stack=True
         )
 
+    assert isinstance(meshgrid, torch.Tensor)
     ndim = meshgrid.shape[-1]
     spatial_shape = meshgrid.shape[:-1]
 
@@ -139,6 +146,7 @@ def disp_to_coords(
         - None: pure spatial displacement field
         - (0,): first dimension is non-spatial (e.g., channel or batch)
         - (0, 1): first two dimensions are non-spatial (e.g., batch and channel)
+        - etc..
 
     Returns
     -------
@@ -316,3 +324,27 @@ def spatial_transform(
         transformed = transformed.type(original_dtype)
 
     return transformed
+
+
+def integrate_disp(
+    disp: torch.Tensor,
+    steps: int,
+    meshgrid: Union[torch.Tensor, None] = None
+) -> torch.Tensor:
+    """
+    TODOC
+    """
+    if meshgrid is None:
+        # generate a crs grid
+        meshgrid = ne.volshape_to_ndgrid(size=disp.shape[:-1], device=disp.device, stack=True)
+
+    if steps == 0:
+        return disp
+
+    disp = disp / (2 ** steps)
+    for _ in range(steps):
+        disp += spatial_transform(
+            disp.movedim(-1, 0), disp, meshgrid=meshgrid, non_spatial_dims=(0,)
+        ).movedim(0, -1)
+
+    return disp
