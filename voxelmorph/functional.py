@@ -265,63 +265,57 @@ def spatial_transform(
     >>> warped.shape
     torch.Size([2, 3, 64, 64])
     """
+    # Early return for no transformation
     if trf is None:
         return image
 
-    # Parse non-spatial dimensions
-    num_non_spatial, num_spatial = _parse_non_spatial_dims(non_spatial_dims, image.ndim)
+    # Parse image dimensions to understand shape
+    num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
+        non_spatial_dims, image.ndim
+    )
+    spatial_shape = image.shape[num_non_spatial:]
 
-    # Handle affine matrix input
+    # Convert affine matrix to displacement field if needed
     if trf.ndim == 2:
-        if meshgrid is None:
-            spatial_shape = image.shape[num_non_spatial:]
-            meshgrid = ne.volshape_to_ndgrid(size=spatial_shape, device=image.device, stack=True)
-
+        # Invert affine to get source-to-target mapping for warping
         trf = torch.linalg.inv(trf)
-        trf = affine_to_disp(trf, meshgrid=meshgrid, origin_at_center=origin_at_center)
+        trf = affine_to_disp(trf, meshgrid, shape=spatial_shape, origin_at_center=origin_at_center)
         isdisp = True
 
-    # Convert displacement to coordinates if needed
     if isdisp:
         trf = disp_to_coords(trf, meshgrid=meshgrid)
 
-    # Infer interpolation mode for 'linear'
     if mode == 'linear':
         mode = ne.utils.infer_linear_interpolation_mode(num_spatial)
 
-    # Handle non-floating point images
-    reset_type = None
+    # Prepare image for grid_sample (must have B, C)
+    original_dtype = None
     if not torch.is_floating_point(image):
         if mode == 'nearest':
-            reset_type = image.dtype
+            original_dtype = image.dtype
         image = image.type(torch.float32)
 
-    # Add dimensions to image to get (B, C, *spatial) format for grid_sample
-    dims_to_add = 2 - num_non_spatial
-    for _ in range(dims_to_add):
+    # Add dimensions to reach (B, C, *spatial) format
+    num_dims_to_add = 2 - num_non_spatial
+    for _ in range(num_dims_to_add):
         image = image.unsqueeze(0)
 
-    # Determine if coordinates have batch dimension
-    # Coordinates end with (*spatial, ndim), might have batch at front
-    # If trf has ndim == num_spatial + 1, it's pure spatial (*spatial, ndim)
-    # If trf has ndim > num_spatial + 1, it has batch dimension(s)
-    coord_has_batch = trf.ndim > (num_spatial + 1)
-
-    # Add batch dimension to coordinates if needed to match image
-    if not coord_has_batch:
+    # Prepare coordinates for grid_sample (requires batch dimension)
+    # Coordinates format: (*spatial, ndim) or (B, *spatial, ndim)
+    # Check if batch dimension already exists
+    trf_has_batch_dim = trf.ndim > (num_spatial + 1)
+    if not trf_has_batch_dim:
         trf = trf.unsqueeze(0)
 
-    # Apply transformation using grid_sample
+    # Apply transformation
     transformed = torch.nn.functional.grid_sample(
         image, trf, align_corners=align_corners, mode=mode
     )
 
-    # Remove added dimensions from result
-    for _ in range(dims_to_add):
+    # Restore original format
+    for _ in range(num_dims_to_add):
         transformed = transformed.squeeze(0)
-
-    # Restore original dtype if needed
-    if reset_type is not None:
-        transformed = transformed.type(reset_type)
+    if original_dtype is not None:
+        transformed = transformed.type(original_dtype)
 
     return transformed
