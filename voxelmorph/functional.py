@@ -3,6 +3,7 @@ Single tensor operations (no B, C, dimensions assumption)
 """
 from typing import Union, Sequence, Tuple, Literal
 
+import numpy as np
 import torch
 
 import neurite as ne
@@ -12,6 +13,7 @@ __all__ = [
     'affine_to_disp',
     'angles_to_rotation_matrix',
     'params_to_affine',
+    'random_affine',
     'disp_to_coords',
     'spatial_transform',
     'integrate_disp',
@@ -148,6 +150,100 @@ def params_to_affine(
     matrix = T @ R @ Z @ S
 
     return torch.as_tensor(matrix, dtype=torch.float32, device=device)
+
+
+def random_affine(
+    ndim: int,
+    max_translation: float = 0,
+    max_rotation: float = 0,
+    max_scaling: float = 1,
+    device: Union[torch.device, None] = None,
+    sampling: bool = True
+) -> torch.Tensor:
+    """
+    Generate random affine transformation matrix.
+
+    This function generates random affine parameters (translation, rotation, scaling)
+    and composes them into an affine transformation matrix.
+
+    Parameters
+    ----------
+    ndim : int
+        Spatial dimensionality of the transformation (2 or 3).
+    max_translation : float, default=0
+        Range to sample translation parameters from. Scalar values define the max
+        deviation from 0.0 (-max_translation, max_translation).
+    max_rotation : float, default=0
+        Range to sample rotation parameters from. Scalar values define the max
+        deviation from 0.0 (-max_rotation, max_rotation).
+    max_scaling : float, default=1
+        Max to sample scale parameters from.
+        It is converted into a 2-element array defines the (min, max) deviation from 1.0.
+    device : torch.device or None, default=None
+        Device for the output tensor.
+    sampling : bool, default=True
+        If True, sample random parameters within the specified ranges.
+        If False, use the maximum values directly.
+
+    Returns
+    -------
+    torch.Tensor
+        Affine transformation matrix of shape (ndim+1, ndim+1).
+
+    Examples
+    --------
+    >>> import voxelmorph as vxm
+    >>> # Generate random 3D affine with translation
+    >>> affine = vxm.random_affine(ndim=3, max_translation=10)
+    >>> affine.shape
+    torch.Size([4, 4])
+
+    >>> # Generate 2D affine with rotation and scaling
+    >>> affine = vxm.random_affine(
+    ...     ndim=2,
+    ...     max_rotation=30,
+    ...     max_scaling=1.2,
+    ...     device=torch.device('cuda')
+    ... )
+    >>> affine.shape
+    torch.Size([3, 3])
+    """
+    # Generate translation parameters
+    if sampling:
+        translation_range = sorted([-max_translation, max_translation])
+        translation = np.random.uniform(*translation_range, size=ndim)
+    else:
+        translation = np.array([max_translation] * ndim)
+
+    # Generate rotation parameters
+    if sampling:
+        rotation_range = sorted([-max_rotation, max_rotation])
+        rotation = np.random.uniform(*rotation_range, size=(1 if ndim == 2 else 3))
+    else:
+        rotation = np.array([max_rotation] * (1 if ndim == 2 else 3))
+
+    # Generate scaling parameters
+    if sampling:
+        if max_scaling < 1:
+            raise ValueError(
+                'max scaling to random affine cannot be < 1, see function doc for more info'
+            )
+
+        inv = np.random.choice([-1, 1], size=ndim)
+        scale = np.random.uniform(1, max_scaling, size=ndim) ** inv
+
+    else:
+        scale = np.array([max_scaling] * ndim)
+
+    # Compose from random parameters
+    aff = params_to_affine(
+        ndim=ndim,
+        translation=translation,
+        rotation=rotation,
+        scale=scale,
+        device=device
+    )
+    return aff
 
 
 def affine_to_disp(

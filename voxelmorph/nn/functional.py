@@ -21,7 +21,6 @@ __all__ = [
     "smooth_gaussian",
     "perlin",
     "random_disp",
-    "random_affine",
     "coords_to_disp",
     "random_transform",
 ]
@@ -325,69 +324,6 @@ def random_disp(
     return disp
 
 
-def random_affine(
-    ndim: int,
-    max_translation: float = 0,
-    max_rotation: float = 0,
-    max_scaling: float = 1,
-    device: torch.device = None,
-    sampling: bool = True
-) -> Tensor:
-    """
-    Parameters
-    ----------
-    ndim : int
-        Dimensionality of target transform.
-    max_translation : float
-        Range to sample translation parameters from. Scalar values define the max
-        deviation from 0.0 (-max_translation, max_translation).
-    max_rotation : float
-        Range to sample rotation parameters from. Scalar values define the max
-        deviation from 0.0 (-max_rotation, max_rotation).
-    max_scaling : float
-        Max to sample scale parameters from.
-        It is converted into a 2-element array defines the (min, max) deviation from 1.0.
-
-    Returns
-    -------
-    Tensor
-        vox2vox affine matrix rotating around the image center
-    """
-
-    #
-    if (sampling):
-        translation_range = sorted([-max_translation, max_translation])
-        translation = np.random.uniform(*translation_range, size=ndim)
-    else:
-        translation = np.array([max_translation] * ndim)
-
-    #
-    if (sampling):
-        rotation_range = sorted([-max_rotation, max_rotation])
-        rotation = np.random.uniform(*rotation_range, size=(1 if ndim == 2 else 3))
-    else:
-        rotation = np.array([max_rotation] * (1 if ndim == 2 else 3))
-
-    #
-    if (sampling):
-        if max_scaling < 1:
-            raise ValueError('max scaling to random affine cannot be less than 1, '
-                             'see function doc for more info')
-        inv = np.random.choice([-1, 1], size=ndim)
-        scale = np.random.uniform(1, max_scaling, size=ndim) ** inv
-    else:
-        scale = np.array(max_scaling * ndim)
-
-    # compose from random paramters
-    aff = vxm.params_to_affine(
-        ndim=ndim,
-        translation=translation,
-        rotation=rotation,
-        scale=scale,
-        device=device)
-    return aff
-
-
 def coords_to_disp(coords, meshgrid=None) -> Tensor:
     """
     TODOC
@@ -445,11 +381,11 @@ def random_transform(
         meshgrid = ne.volshape_to_ndgrid(size=shape, device=device, stack=True)
 
         # convert max_translation from mm to voxel
-        # the matrix returned from random_affine() is vox2vox rotating around the image center.
+        # the matrix returned from vxm.random_affine() is vox2vox rotating around the image center.
         # it is used as target to source transformation in affine_to_disp() to covert
         # the vox2vox matrix to dispacement field.
         max_translation = max_translation / voxsize
-        matrix = random_affine(
+        matrix = vxm.random_affine(
             ndim=ndim,
             max_translation=max_translation,
             max_rotation=max_rotation,
