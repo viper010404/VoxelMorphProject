@@ -77,8 +77,6 @@ def affine_to_disp(
             f'meshgrid dimensionality ({ndim}D)'
         )
 
-    batch_shape = affine.shape[:-2]
-
     # Adjust meshgrid to center origin if requested
     grid = meshgrid.clone() if origin_at_center else meshgrid
     if origin_at_center:
@@ -109,10 +107,7 @@ def affine_to_disp(
     out = out - mesh  # Subtract original mesh to get displacement
     out = out.transpose(-2, -1)
 
-    if batch_shape:
-        disp = out.reshape(*batch_shape, *spatial_shape, ndim)
-    else:
-        disp = out.reshape(*spatial_shape, ndim)
+    disp = out.reshape(*spatial_shape, ndim)
 
     return disp
 
@@ -166,7 +161,9 @@ def disp_to_coords(
     torch.Size([2, 3, 64, 64, 2])
     """
     # Parse non spatial -- disp has shape (*non_spatial, *spatial, ndim)
-    num_non_spatial, num_spatial = ne._parse_non_spatial_dims(non_spatial_dims, disp.ndim - 1)
+    num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
+        non_spatial_dims, disp.ndim - 1
+    )
     spatial_shape = disp.shape[num_non_spatial: -1]
 
     if meshgrid is None:
