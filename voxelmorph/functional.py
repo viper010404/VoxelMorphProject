@@ -18,6 +18,7 @@ __all__ = [
     'coords_to_disp',
     'spatial_transform',
     'integrate_disp',
+    'constant_shift_field',
     'is_affine_shape',
 ]
 
@@ -646,6 +647,97 @@ def integrate_disp(
         ).movedim(0, -1)
 
     return disp
+
+
+def constant_shift_field(
+        spatial_shape: Sequence[int],
+        shift_size: Union[int, float, Sequence[Union[int, float]], torch.Tensor] = 1,
+        normalize: bool = False,
+        device: Union[str, torch.device] = 'cpu',
+) -> torch.Tensor:
+    """
+    Generate a constant displacement field for N-dimensional space.
+
+    This function creates a displacement field where every spatial location has the same
+    displacement vector. Each channel represents displacement along one spatial axis.
+
+    Parameters
+    ----------
+    spatial_shape : Sequence[int]
+        Shape of the spatial dimensions, e.g., (H, W) for 2D or (D, H, W) for 3D.
+    shift_size : int, float, Sequence[int or float], or torch.Tensor, default=1
+        Displacement magnitude for each spatial axis.
+        - If scalar: same displacement for all axes
+        - If Sequence: length must equal number of spatial dimensions
+        - If Tensor: must have shape (n_spatial_dims,)
+    normalize : bool, default=False
+        If True, normalize the first spatial channel by (size - 1), where
+        size is the extent of the first spatial dimension.
+    device : str or torch.device, default='cpu'
+        Device on which to create the tensor.
+
+    Returns
+    -------
+    torch.Tensor
+        Displacement field with shape (n_spatial_dims, *spatial_shape).
+        Channel i contains the displacement along spatial axis i.
+
+    Examples
+    --------
+    >>> import voxelmorph as vxm
+    >>> # Create 2D displacement field
+    >>> flow = vxm.constant_shift_field((4, 4), shift_size=1.0)
+    >>> flow.shape
+    torch.Size([2, 4, 4])
+    >>> # All locations shift by 1 in both x and y
+    >>> flow[:, 0, 0]
+    tensor([1., 1.])
+
+    >>> # Create 3D field with different shift per axis
+    >>> flow = vxm.constant_shift_field((4, 4, 4), shift_size=[1.0, 2.0, 3.0])
+    >>> flow.shape
+    torch.Size([3, 4, 4, 4])
+    >>> flow[:, 0, 0, 0]
+    tensor([1., 2., 3.])
+
+    >>> # Normalized shift for first dimension
+    >>> flow = vxm.constant_shift_field((5, 5), shift_size=4.0, normalize=True)
+    >>> flow[0, 0, 0]  # 4.0 / (5 - 1) = 1.0
+    tensor(1.)
+    >>> flow[1, 0, 0]  # Unchanged
+    tensor(4.)
+    """
+    n_spatial_dims = len(spatial_shape)
+
+    # Convert shift_size to float32 tensor
+    if isinstance(shift_size, (int, float)):
+        shift_size = torch.tensor([shift_size] * n_spatial_dims, dtype=torch.float32)
+    elif isinstance(shift_size, Sequence):
+        shift_size = torch.tensor(shift_size, dtype=torch.float32)
+    elif isinstance(shift_size, torch.Tensor):
+        shift_size = shift_size.float()
+    else:
+        raise ValueError(
+            f'shift_size must be int, float, Sequence, or Tensor, '
+            f'got {type(shift_size)}: {shift_size}'
+        )
+
+    if shift_size.shape[0] != n_spatial_dims:
+        raise ValueError(
+            f'shift_size must have {n_spatial_dims} elements to match spatial_shape. '
+            f'Got {shift_size.shape[0]} elements: {shift_size}'
+        )
+
+    # Reshape for broadcasting: (n_spatial_dims, 1, 1, ...)
+    shift_size = shift_size.view(-1, *[1] * n_spatial_dims).to(device=device)
+
+    # Create displacement field by broadcasting shift values across all spatial locations
+    flow_field = shift_size.expand(n_spatial_dims, *spatial_shape).clone()
+
+    if normalize:
+        flow_field[0, ...] /= (spatial_shape[0] - 1)
+
+    return flow_field
 
 
 def is_affine_shape(shape: tuple) -> bool:
