@@ -111,7 +111,7 @@ def test_spatial_transform_identity_affine():
 
     # 2D identity affine (3×3)
     affine = torch.eye(3, dtype=torch.float32)
-    out = vxf.spatial_transform(img, affine)
+    out = vxm.functional.spatial_transform(img, affine, non_spatial_dims=(0,))
 
     assert out.shape == img.shape
     assert torch.allclose(out, img, atol=1e-6)
@@ -337,8 +337,7 @@ def test_spatial_transform_shearing():
 
     # Create identity affine (no transformation)
     affine = torch.eye(3, dtype=torch.float32)
-
-    out = vxf.spatial_transform(img, affine)
+    out = vxm.functional.spatial_transform(img, affine, non_spatial_dims=(0,))
 
     # With identity transformation, output should be exactly the same as input
     assert torch.allclose(out, img, atol=1e-6), f"Expected {img}, got {out}"
@@ -593,7 +592,7 @@ def test_spatial_transform_different_dtypes():
     img_f32 = torch.randn(1, 3, 3, dtype=torch.float32)
     affine = torch.eye(3, dtype=torch.float32)
 
-    out_f32 = vxf.spatial_transform(img_f32, affine)
+    out_f32 = vxm.functional.spatial_transform(img_f32, affine, non_spatial_dims=(0,))
     assert out_f32.dtype == torch.float32
     assert torch.allclose(out_f32, img_f32, atol=1e-6)
 
@@ -601,7 +600,13 @@ def test_spatial_transform_different_dtypes():
     img_int = torch.randint(0, 10, (1, 3, 3), dtype=torch.int32)
     affine = torch.eye(3, dtype=torch.float32)
 
-    out_int = vxf.spatial_transform(img_int, affine, method='nearest')
+    # Use shape-agnostic function: (1, 3, 3) = (C=1, H=3, W=3)
+    out_int = vxm.functional.spatial_transform(
+        img_int,
+        affine,
+        mode='nearest',
+        non_spatial_dims=(0,)
+    )
     assert out_int.dtype == torch.int32
     assert torch.allclose(out_int.float(), img_int.float(), atol=1e-6)
 
