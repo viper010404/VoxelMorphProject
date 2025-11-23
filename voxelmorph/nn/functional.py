@@ -17,7 +17,6 @@ import voxelmorph as vxm
 
 __all__ = [
     "spatial_transform",
-    "disp_to_coords",
     "integrate_disp",
     "angles_to_rotation_matrix",
     "compose",
@@ -34,94 +33,66 @@ __all__ = [
 def spatial_transform(
     image: Tensor,
     trf: Union[Tensor, None],
-    method: str = 'linear',
+    method: Literal['nearest', 'linear'] = 'linear',
     isdisp: bool = True,
     meshgrid: Union[Tensor, None] = None,
     origin_at_center: bool = True
 ) -> Tensor:
     """
-    TODOC
-    """
-    if trf is None:
-        return image
+    Apply spatial transformation to image in (B, C, *spatial) format.
 
-    if trf.ndim == 2:
-        if meshgrid is None:
-            meshgrid = nef.volshape_to_ndgrid(size=image.shape[1:], device=image.device, stack=True)
+    Wrapper around voxelmorph.functional.spatial_transform with non_spatial_dims=(0, 1).
 
-        trf = torch.linalg.inv(trf)
-        trf = vxm.functional.affine_to_disp(
-            trf,
-            meshgrid=meshgrid,
-            origin_at_center=origin_at_center
-        )
-        isdisp = True
+    Parameters
+    ----------
+    image : Tensor
+        Input image with shape (B, C, *spatial).
+    trf : Tensor or None
+        Transformation field. Can be:
+        - Affine matrix: shape (N+1, N+1) or (N, N+1)
+        - Displacement field: shape (*spatial, N)
+        - Coordinate field: shape (*spatial, N)
+        - None: returns image unchanged
+    method : str, default='linear'
+        Interpolation mode ('linear' or 'nearest').
+    isdisp : bool, default=True
+        If True, treat trf as displacement field. If False, treat as coordinates.
+    meshgrid : Tensor or None, default=None
+        Pre-computed coordinate grid.
+    origin_at_center : bool, default=True
+        Place origin at image center for affine transformations.
 
-    if isdisp:
-        # convert the displacement crs to absolute crs scaled to range [-1, 1]
-        trf = disp_to_coords(trf, meshgrid=meshgrid)
+    Returns
+    -------
+    Tensor
+        Transformed image with shape (B, C, *spatial).
 
-    # Auto-detect interpolation mode for 'linear' based on dimensionality
-    if method == 'linear':
-        ndim = image.ndim - 1  # Exclude channel dimension
-        method = 'trilinear' if ndim == 3 else 'bilinear'
-
-    reset_type = None
-    if not torch.is_floating_point(image):
-        if method == 'nearest':
-            reset_type = image.dtype
-        image = image.type(torch.float32)
-
-    image = image.unsqueeze(0)
-    trf = trf.unsqueeze(0)
-
-    # trf is an absolute crs field in the range of [-1, 1]
-    interped = torch.nn.functional.grid_sample(image, trf, align_corners=True, mode=method)
-    interped = interped.squeeze(0)
-
-    if reset_type is not None:
-        interped = interped.type(reset_type)
-
-    return interped
-
-
-def disp_to_coords(disp, meshgrid=None) -> Tensor:
-    """
-    Convert the displacement crs to absolute crs scaled to range [-1, 1].
-
-    Parameters:
-    -----------
-    disp: torch.Tensor
-        Displacement crs field
-    meshgrid: torch.Tensor, optional
-       crs grid for the image shape
-
-    Returns:
+    Examples
     --------
-    torch.Tensor:
-        The absolute crs field scaled to range [-1, 1].
+    >>> # 2D image with batch and channel
+    >>> image = torch.randn(2, 3, 64, 64)
+    >>> disp = torch.randn(64, 64, 2)
+    >>> warped = spatial_transform(image, disp)
+    >>> warped.shape
+    torch.Size([2, 3, 64, 64])
+
+    >>> # 3D image with batch and channel
+    >>> image = torch.randn(1, 1, 64, 64, 64)
+    >>> disp = torch.randn(64, 64, 64, 3)
+    >>> warped = spatial_transform(image, disp)
+    >>> warped.shape
+    torch.Size([1, 1, 64, 64, 64])
     """
-    if meshgrid is None:
-        meshgrid = nef.volshape_to_ndgrid(
-            size=disp.shape[:-1], device=disp.device, stack=True
-        )
-
-    shape = disp.shape[:-1]
-    ndim = disp.shape[-1]
-
-    # compute the absolute crs field
-    # scale the field to range [-1, 1], which is expected by torch.nn.functional.grid_sample()
-    coords = (meshgrid + disp)
-    for d in range(ndim):
-        if shape[d] == 1:
-            coords[..., d] *= 0
-        else:
-            coords[..., d] *= 2 / (shape[d] - 1)
-            coords[..., d] -= 1
-
-    coords = coords.flip(-1)
-
-    return coords
+    return vxm.functional.spatial_transform(
+        image=image,
+        trf=trf,
+        mode=method,
+        isdisp=isdisp,
+        meshgrid=meshgrid,
+        origin_at_center=origin_at_center,
+        non_spatial_dims=(0, 1),
+        align_corners=True
+    )
 
 
 def integrate_disp(
