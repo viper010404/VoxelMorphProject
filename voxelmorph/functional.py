@@ -20,6 +20,7 @@ __all__ = [
     'integrate_disp',
     'constant_shift_field',
     'is_affine_shape',
+    'make_square_affine',
 ]
 
 
@@ -773,3 +774,48 @@ def is_affine_shape(shape: tuple) -> bool:
         return False
 
     return True
+
+
+def make_square_affine(mat: torch.Tensor) -> torch.Tensor:
+    """
+    Convert affine matrix from compact form (..., N, N+1) to square form (..., N+1, N+1).
+
+    Adds the homogeneous row [0, 0, ..., 0, 1] to the bottom of the matrix.
+
+    Parameters
+    ----------
+    mat : Tensor
+        Affine matrix of shape (..., M, N+1) where M is N or N+1.
+
+    Returns
+    -------
+    Tensor
+        Square affine matrix of shape (..., N+1, N+1).
+
+    Examples
+    --------
+    >>> affine = torch.tensor(
+    >>> ... [[1., 0., 5.],
+    >>> ... [0., 1., 3.]]
+    >>> )
+    >>> square = make_square_affine(affine)
+    >>> square.shape
+    torch.Size([3, 3])
+    >>> square[-1]
+    tensor([0., 0., 1.])
+    """
+    if not is_affine_shape(mat.shape):
+        raise ValueError(f'Invalid affine shape: {mat.shape}')
+
+    # Already square
+    if mat.shape[-2] == mat.shape[-1]:
+        return mat
+
+    # Get dimensions
+    *batch_dims, rows, cols = mat.shape
+
+    # Create bottom row as [0, 0, ..., 0, 1]
+    bottom_row = torch.zeros(*batch_dims, 1, cols, dtype=mat.dtype, device=mat.device)
+    bottom_row[..., 0, -1] = 1.0
+
+    return torch.cat([mat, bottom_row], dim=-2)

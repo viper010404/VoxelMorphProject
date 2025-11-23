@@ -405,51 +405,6 @@ def random_transform(
     return trf
 
 
-def make_square_affine(mat: Tensor) -> Tensor:
-    """
-    Convert affine matrix from compact form (..., N, N+1) to square form (..., N+1, N+1).
-
-    Adds the homogeneous row [0, 0, ..., 0, 1] to the bottom of the matrix.
-
-    Parameters
-    ----------
-    mat : Tensor
-        Affine matrix of shape (..., M, N+1) where M is N or N+1.
-
-    Returns
-    -------
-    Tensor
-        Square affine matrix of shape (..., N+1, N+1).
-
-    Examples
-    --------
-    >>> affine = torch.tensor(
-    >>> ... [[1., 0., 5.],
-    >>> ... [0., 1., 3.]]
-    >>> )
-    >>> square = make_square_affine(affine)
-    >>> square.shape
-    torch.Size([3, 3])
-    >>> square[-1]
-    tensor([0., 0., 1.])
-    """
-    if not vxm.is_affine_shape(mat.shape):
-        raise ValueError(f'Invalid affine shape: {mat.shape}')
-
-    # Already square
-    if mat.shape[-2] == mat.shape[-1]:
-        return mat
-
-    # Get dimensions
-    *batch_dims, rows, cols = mat.shape
-
-    # Create bottom row as [0, 0, ..., 0, 1]
-    bottom_row = torch.zeros(*batch_dims, 1, cols, dtype=mat.dtype, device=mat.device)
-    bottom_row[..., 0, -1] = 1.0
-
-    return torch.cat([mat, bottom_row], dim=-2)
-
-
 def compose(
     transforms: Sequence[Tensor],
     interpolation_mode: str = 'bilinear',
@@ -580,8 +535,8 @@ def compose(
 
         # Case 3: Both are affine matrices
         else:
-            next_sq = make_square_affine(next_trf)
-            curr_sq = make_square_affine(curr)
+            next_sq = vxm.make_square_affine(next_trf)
+            curr_sq = vxm.make_square_affine(curr)
             curr = (next_sq @ curr_sq)[..., :-1, :]  # Remove last row to return compact form
 
     return curr
