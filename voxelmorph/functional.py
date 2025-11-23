@@ -63,12 +63,12 @@ def angles_to_rotation_matrix(
 
 def params_to_affine(
     ndim: int,
-    translation: torch.Tensor = None,
-    rotation: torch.Tensor = None,
-    scale: torch.Tensor = None,
-    shear: torch.Tensor = None,
+    translation: Union[torch.Tensor, None] = None,
+    rotation: Union[torch.Tensor, None] = None,
+    scale: Union[torch.Tensor, None] = None,
+    shear: Union[torch.Tensor, None] = None,
     degrees: bool = True,
-    device: torch.device = None
+    device: Union[torch.device, None] = None
 ) -> torch.Tensor:
     """
     Makes an affine matrix from translation, rotation, scale, and shear transform components.
