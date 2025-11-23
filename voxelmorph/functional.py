@@ -7,7 +7,6 @@ import torch
 
 import neurite as ne
 import neurite.nn.functional as nef
-from neurite.functional import _parse_non_spatial_dims
 
 
 def affine_to_disp(
@@ -167,7 +166,7 @@ def disp_to_coords(
     torch.Size([2, 3, 64, 64, 2])
     """
     # Parse non spatial -- disp has shape (*non_spatial, *spatial, ndim)
-    num_non_spatial, num_spatial = _parse_non_spatial_dims(non_spatial_dims, disp.ndim - 1)
+    num_non_spatial, num_spatial = ne._parse_non_spatial_dims(non_spatial_dims, disp.ndim - 1)
     spatial_shape = disp.shape[num_non_spatial: -1]
 
     if meshgrid is None:
