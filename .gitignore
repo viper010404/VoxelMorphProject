@@ -39,3 +39,6 @@ TODOs
 voxelmorph-sandbox/
 th_*
 uv.lock
+.coverage/
+.coverage
+pyrightconfig.json
