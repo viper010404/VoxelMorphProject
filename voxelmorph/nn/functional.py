@@ -21,8 +21,6 @@ __all__ = [
     "angles_to_rotation_matrix",
     "compose",
     "params_to_affine",
-    "gaussian_kernel_1d",
-    "gaussian_blur",
     "smooth_gaussian",
     "perlin",
     "random_disp",
@@ -141,10 +139,10 @@ def affine_to_disp(
 
 def spatial_transform(
     image: Tensor,
-    trf: Tensor,
+    trf: Union[Tensor, None],
     method: str = 'linear',
     isdisp: bool = True,
-    meshgrid: Tensor = None,
+    meshgrid: Union[Tensor, None] = None,
     origin_at_center: bool = True
 ) -> Tensor:
     """
@@ -155,16 +153,10 @@ def spatial_transform(
 
     if trf.ndim == 2:
         if meshgrid is None:
-            meshgrid = nef.volshape_to_ndgrid(
-                size=image.shape[1:], device=image.device, stack=True
-            )
+            meshgrid = nef.volshape_to_ndgrid(size=image.shape[1:], device=image.device, stack=True)
 
         trf = torch.linalg.inv(trf)
-        trf = affine_to_disp(
-            trf,
-            meshgrid=meshgrid,
-            origin_at_center=origin_at_center
-        )
+        trf = affine_to_disp(trf, meshgrid=meshgrid, origin_at_center=origin_at_center)
         isdisp = True
 
     if isdisp:
@@ -395,122 +387,6 @@ def params_to_affine(
     return torch.as_tensor(matrix, dtype=torch.float32, device=device)
 
 
-def gaussian_kernel_1d(sigma, truncate: int = 3, device=None, dtype=None):
-    """
-    Generate a 1D Gaussian kernel with the specified standard deviations.
-
-    Parameters
-    ----------
-    sigma : float
-        A list of standard deviations for each dimension.
-    truncate : int, optional
-        The number of standard deviations to extend the kernel before truncating.
-    device : torch.device, optional
-        The device on which to create the kernel.
-    dtype : torch.dtype | None, optional
-        Data type of the returned kernel.
-
-    Returns
-    -------
-    Tensor
-        A kernel of shape `2 * truncate * sigma + 1`.
-
-    Notes
-    -----
-    The kernel is truncated when its values drop below `1e-5` of the maximum value.
-    """
-    r = int(truncate * sigma + 0.5)
-    x = torch.arange(-r, r + 1, device=device, dtype=dtype)
-    sigma2 = 1 / torch.clip(torch.as_tensor(sigma), min=1e-5).pow(2)
-    pdf = torch.exp(-0.5 * (x.pow(2) * sigma2))
-    return pdf / pdf.sum()
-
-
-def gaussian_blur(
-    image: Tensor,
-    sigma: List[float],
-    batched: bool = False,
-    truncate: int = 3,
-) -> Tensor:
-    """
-    Apply Gaussian blurring to an image.
-
-    Parameters
-    ----------
-    image : Tensor
-        An input tensor of shape `(C, W, H[, D])` to blur. A batch dimension
-        can be included by setting `batched` to `True`.
-    sigma : float or List[float]
-        Standard deviation(s) of the Gaussian filter along each dimension.
-    batched : bool, optional
-        Whether the input tensor includes a batch dimension.
-    truncate : int, optional
-        The number of standard deviations to extend the kernel before truncating.
-
-    Returns
-    -------
-    Tensor
-        The blurred tensor with the same shape as the input tensor.
-
-    Notes
-    -----
-    The Gaussian filter is applied using convolution. The size of the filter kernel is
-    determined by the standard deviation and the truncation factor.
-    """
-    ndim = image.ndim - (2 if batched else 1)
-
-    # sanity check for common mistake
-    if ndim == 4 and not batched:
-        raise ValueError(
-            f'gaussian blur input has {image.ndim} dims, but batched option is False'
-        )
-
-    # normalize sigmas
-    if torch.as_tensor(sigma).ndim == 0:
-        sigma = [sigma] * ndim
-    if len(sigma) != ndim:
-        raise ValueError(f'sigma must be {ndim}D, but got length {len(sigma)}')
-
-    blurred = image if batched else image.unsqueeze(0)
-
-    if all(s == sigma[0] for s in sigma):
-        # Isotropic, can use the same vector in all directions cases. Since
-        # creating the kernel is actually one of the most time intensive steps
-        # this is an efficiency gain worth exploiting
-        kernel_vec = gaussian_kernel_1d(
-            sigma[0],
-            truncate,
-            device=blurred.device,
-            dtype=blurred.dtype,
-        )
-        kernel_vecs = [kernel_vec] * ndim
-    else:
-        # Three different kernels, one for each direction
-        kernel_vecs = [
-            gaussian_kernel_1d(
-                s,
-                truncate,
-                device=blurred.device,
-                dtype=blurred.dtype,
-            )
-            for s in sigma
-        ]
-
-    for dim, kernel in enumerate(kernel_vecs):
-
-        # apply the convolution
-        slices = [None] * (ndim + 2)
-        slices[dim + 2] = slice(None)
-        kernel_dim = kernel[slices]
-        conv = getattr(torch.nn.functional, f'conv{ndim}d')
-        blurred = conv(blurred, kernel_dim, groups=image.shape[0], padding="same")
-
-    if not batched:
-        blurred = blurred.squeeze(0)
-
-    return blurred
-
-
 def smooth_gaussian(shape, sigma, magnitude=1.0, device=None, method='blur'):
     """
     Generates a smooth Gaussian noise image.
@@ -536,7 +412,11 @@ def smooth_gaussian(shape, sigma, magnitude=1.0, device=None, method='blur'):
     """
     if method == 'blur':
         noise = torch.normal(0, 1, size=shape, device=device)
-        noise = gaussian_blur(noise.unsqueeze(0), sigma).squeeze(0)
+        # Add batch and channel dimensions for neurite's gaussian_smoothing
+        noise = noise.unsqueeze(0).unsqueeze(0)
+        noise = nef.gaussian_smoothing(noise, sigma=sigma, truncate=3, padding_mode='same')
+        # Remove batch and channel dimensions
+        noise = noise.squeeze(0).squeeze(0)
     elif method == 'upsample':
         downshape = tuple([max(int(s // sigma), 2) for s in shape])
         noise = torch.normal(0, 1, size=(1, 1, *downshape), device=device)
