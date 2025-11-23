@@ -10,11 +10,12 @@ from typing import List, Union, Optional, Sequence, Literal
 import torch
 from torch import Tensor
 import numpy as np
+
 import neurite as ne
 import neurite.nn.functional as nef
+import voxelmorph as vxm
 
 __all__ = [
-    "affine_to_disp",
     "spatial_transform",
     "disp_to_coords",
     "integrate_disp",
@@ -28,113 +29,6 @@ __all__ = [
     "coords_to_disp",
     "random_transform",
 ]
-
-
-def affine_to_disp(
-    affine: Tensor,
-    meshgrid: Tensor | None = None,
-    origin_at_center: bool = True,
-    shape: Sequence[int] | None = None,
-    warp_right: Tensor | None = None
-) -> Tensor:
-    """
-    Convert an affine transformation matrix to a displacement field.
-
-    Parameters
-    ----------
-    affine : Tensor
-        Affine transformation matrix of shape (..., N, N+1) or (..., N+1, N+1).
-        Expected to be a vox2vox target-to-source transformation.
-    meshgrid : Tensor, optional
-        Pre-computed meshgrid tensor of shape (*spatial_shape, N), where N is the spatial
-        dimensionality. If None, will be computed from `shape` parameter.
-    origin_at_center : bool, optional
-        If True, place the coordinate system origin at the image center. If False, origin
-        is at the top-left corner. Default is True.
-    shape : Sequence[int], optional
-        Spatial shape (N dimensions) to create meshgrid if `meshgrid` is not provided.
-        Required if `meshgrid` is None.
-    warp_right : Tensor, optional
-        Right-compose the affine with this displacement field of shape (..., *spatial_shape, N).
-        Computes affine(x + warp_right(x)) - x. Useful for composing transforms.
-
-    Returns
-    -------
-    Tensor
-        Displacement field of shape (..., *spatial_shape, N).
-
-    Examples
-    --------
-    >>> # Basic usage with pre-computed meshgrid
-    >>> import neurite.nn.functional as nef
-    >>> affine = torch.tensor(
-    >>> ... [[1., 0., 5.],
-    >>> ... [0., 1., 3.]]
-    >>> )
-    >>> grid = nef.volshape_to_ndgrid((64, 64), stack=True)
-    >>> disp = affine_to_disp(affine, meshgrid=grid)
-
-    >>> # Using shape parameter instead
-    >>> disp = affine_to_disp(affine, shape=(64, 64))
-
-    >>> # Compose affine with existing displacement field
-    >>> warp = torch.randn(64, 64, 2)
-    >>> composed = affine_to_disp(affine, shape=(64, 64), warp_right=warp)
-    """
-    if meshgrid is None:
-        if shape is None:
-            raise ValueError("Either `meshgrid` or `shape` must be provided")
-        meshgrid = nef.volshape_to_ndgrid(
-            size=shape, device=affine.device, dtype=affine.dtype, stack=True
-        )
-
-    ndim = meshgrid.shape[-1]
-    spatial_shape = meshgrid.shape[:-1]
-
-    if affine.shape[-1] != ndim + 1:
-        raise ValueError(
-            f'Affine dimensionality ({affine.shape[-1] - 1}D) does not match '
-            f'meshgrid dimensionality ({ndim}D)'
-        )
-
-    batch_shape = affine.shape[:-2]
-
-    # Adjust meshgrid to center origin if requested
-    grid = meshgrid.clone() if origin_at_center else meshgrid
-    if origin_at_center:
-        for d in range(ndim):
-            grid[..., d] -= (spatial_shape[d] - 1) / 2
-
-    # Flatten and transpose grid
-    mesh = grid.reshape(-1, ndim).T  # (ndim, num_voxels)
-    out = mesh
-
-    # Optionally right-compose with displacement field
-    if warp_right is not None:
-        if warp_right.shape[-ndim - 1: -1] != spatial_shape:
-            raise ValueError(
-                f'warp_right spatial shape {warp_right.shape[-ndim - 1:-1]} does not match '
-                f'meshgrid shape {spatial_shape}'
-            )
-
-        # Flatten and transpose warp
-        warp_flat = warp_right.reshape(*warp_right.shape[:-ndim - 1], -1, ndim)
-        warp_flat = warp_flat.transpose(-2, -1)
-
-        # Add to coordinates with broadcasting for batch dimension
-        out = out + warp_flat
-
-    # Apply affine transformation with broadcasting
-    out = affine[..., :ndim, :ndim] @ out + affine[..., :ndim, -1:]
-    out = out - mesh  # Subtract original mesh to get displacement
-    out = out.transpose(-2, -1)
-
-    if batch_shape:
-        disp = out.reshape(*batch_shape, *spatial_shape, ndim)
-    else:
-        disp = out.reshape(*spatial_shape, ndim)
-
-    return disp
 
 
 def spatial_transform(
@@ -156,7 +50,11 @@ def spatial_transform(
             meshgrid = nef.volshape_to_ndgrid(size=image.shape[1:], device=image.device, stack=True)
 
         trf = torch.linalg.inv(trf)
-        trf = affine_to_disp(trf, meshgrid=meshgrid, origin_at_center=origin_at_center)
+        trf = vxm.functional.affine_to_disp(
+            trf,
+            meshgrid=meshgrid,
+            origin_at_center=origin_at_center
+        )
         isdisp = True
 
     if isdisp:
@@ -229,16 +127,14 @@ def disp_to_coords(disp, meshgrid=None) -> Tensor:
 def integrate_disp(
     disp: Tensor,
     steps: int,
-    meshgrid: Tensor = None
+    meshgrid: Union[Tensor, None] = None
 ) -> Tensor:
     """
     TODOC
     """
     if meshgrid is None:
         # generate a crs grid
-        meshgrid = nef.volshape_to_ndgrid(
-            size=disp.shape[:-1], device=disp.device, stack=True
-        )
+        meshgrid = nef.volshape_to_ndgrid(size=disp.shape[:-1], device=disp.device, stack=True)
 
     if steps == 0:
         return disp
@@ -663,7 +559,7 @@ def random_transform(
             max_scaling=max_scaling,
             device=device,
             sampling=sampling)
-        trf = affine_to_disp(matrix, meshgrid)
+        trf = vxm.functional.affine_to_disp(matrix, meshgrid)
 
     # generate a nonlinear transform
     if ne.utils.bernoulli(p=warp_probability, shape=(1,)).item():
@@ -935,7 +831,11 @@ def compose(
                 curr_shape = next_trf.shape[-next_trf.shape[-1] - 1:-1]
                 if shape is not None:
                     curr_shape = shape
-                curr = affine_to_disp(curr, shape=curr_shape, origin_at_center=origin_at_center)
+                curr = vxm.functional.affine_to_disp(
+                    affine=curr,
+                    shape=curr_shape,
+                    origin_at_center=origin_at_center
+                )
 
             # Now both are displacement fields: warp next using curr
             # This computes: next(x + curr(x))
@@ -956,7 +856,7 @@ def compose(
 
         # Case 2: Affine on left, dense warp on right
         elif not curr_is_affine:
-            curr = affine_to_disp(
+            curr = vxm.functional.affine_to_disp(
                 next_trf,
                 shape=curr.shape[-curr.shape[-1] - 1: -1],  # Spatial shape from curr
                 origin_at_center=origin_at_center,
