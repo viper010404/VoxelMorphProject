@@ -15,6 +15,7 @@ __all__ = [
     'params_to_affine',
     'random_affine',
     'disp_to_coords',
+    'coords_to_disp',
     'spatial_transform',
     'integrate_disp',
 ]
@@ -428,6 +429,69 @@ def disp_to_coords(
     coords = coords.flip(-1)
 
     return coords
+
+
+def coords_to_disp(
+    coords: torch.Tensor,
+    meshgrid: Union[torch.Tensor, None] = None,
+    non_spatial_dims: Union[Tuple[int, ...], None] = None
+) -> torch.Tensor:
+    """
+    Convert normalized coordinates to displacement field.
+
+    This is the inverse operation of disp_to_coords(). Shape-agnostic implementation
+    that works with any tensor dimensionality.
+
+    Parameters
+    ----------
+    coords : torch.Tensor
+        Normalized coordinates in range [-1, 1] (output from grid_sample or disp_to_coords).
+        Shape depends on non_spatial_dims:
+        - (*spatial, ndim) if non_spatial_dims=None
+        - (C, *spatial, ndim) if non_spatial_dims=(0,)
+        - (B, C, *spatial, ndim) if non_spatial_dims=(0, 1)
+        The last dimension contains coordinate vectors of length ndim.
+    meshgrid : torch.Tensor or None, default=None
+        Pre-computed coordinate grid of shape (*spatial, ndim). If None, computed
+        from coordinate field spatial shape.
+    non_spatial_dims : Tuple[int, ...] or None, default=None
+        Which leading dimensions are non-spatial (before spatial dims):
+        - None: pure spatial coordinate field
+        - (0,): first dimension is non-spatial (e.g., channel or batch)
+        - (0, 1): first two dimensions are non-spatial (e.g., batch and channel)
+
+    Returns
+    -------
+    torch.Tensor
+        Displacement field with same shape as input coordinates.
+
+    Examples
+    --------
+    >>> # Pure spatial 2D coordinates
+    >>> coords = torch.randn(64, 64, 2)
+    >>> disp = coords_to_disp(coords)
+    >>> disp.shape
+    torch.Size([64, 64, 2])
+
+    >>> # With batch and channel dimensions
+    >>> coords = torch.randn(2, 3, 64, 64, 2)
+    >>> disp = coords_to_disp(coords, non_spatial_dims=(0, 1))
+    >>> disp.shape
+    torch.Size([2, 3, 64, 64, 2])
+
+    >>> # Round-trip conversion
+    >>> import voxelmorph as vxm
+    >>> original_disp = torch.randn(64, 64, 2)
+    >>> coords = vxm.disp_to_coords(original_disp)
+    >>> reconstructed_disp = vxm.coords_to_disp(coords)
+    >>> torch.allclose(original_disp, reconstructed_disp, atol=1e-6)
+    True
+    """
+    raise NotImplementedError(
+        'coords_to_disp is not yet implemented. '
+        'The inverse operations from disp_to_coords need to be applied: '
+        'Contact andrew if you need this... or implement it :)'
+    )
 
 
 def spatial_transform(

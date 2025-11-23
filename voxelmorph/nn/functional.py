@@ -21,7 +21,6 @@ __all__ = [
     "smooth_gaussian",
     "perlin",
     "random_disp",
-    "coords_to_disp",
     "random_transform",
 ]
 
@@ -322,21 +321,6 @@ def random_disp(
         disp = vxm.functional.integrate_disp(disp, integrations, meshgrid)
 
     return disp
-
-
-def coords_to_disp(coords, meshgrid=None) -> Tensor:
-    """
-    TODOC
-    """
-    if meshgrid is None:
-        meshgrid = nef.volshape_to_ndgrid(
-            size=coords.shape[:-1], device=coords.device, stack=True
-        )
-
-    raise NotImplementedError(
-        'coords_to_disp is not yet implemented. '
-        'contact andrew if you get this... or implement it :)'
-    )
 
 
 def random_transform(
