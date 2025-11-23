@@ -475,41 +475,6 @@ def constant_shift_field(
     return flow_field
 
 
-def is_affine_shape(shape: tuple) -> bool:
-    """
-    Determine whether the given shape represents an N-dimensional affine matrix.
-
-    An affine matrix has shape (..., M, N+1) where:
-    - N is the spatial dimensionality (2 or 3)
-    - M is either N or N+1 (compact or square form)
-
-    Parameters
-    ----------
-    shape : tuple
-        Shape of the tensor to check.
-
-    Returns
-    -------
-    bool
-        True if shape represents an affine matrix, False otherwise.
-    """
-    if len(shape) < 2:
-        return False
-
-    rows, cols = shape[-2], shape[-1]
-
-    # Cols should be N+1 where N is 2 or 3
-    ndim = cols - 1
-    if ndim not in (2, 3):
-        return False
-
-    # rows should be N or N+1
-    if rows not in (ndim, ndim + 1):
-        return False
-
-    return True
-
-
 def make_square_affine(mat: Tensor) -> Tensor:
     """
     Convert affine matrix from compact form (..., N, N+1) to square form (..., N+1, N+1).
@@ -538,7 +503,7 @@ def make_square_affine(mat: Tensor) -> Tensor:
     >>> square[-1]
     tensor([0., 0., 1.])
     """
-    if not is_affine_shape(mat.shape):
+    if not vxm.is_affine_shape(mat.shape):
         raise ValueError(f'Invalid affine shape: {mat.shape}')
 
     # Already square
@@ -642,10 +607,10 @@ def compose(
     # Iterate through remaining transforms in reverse order
     for next_trf in reversed(transforms[:-1]):
 
-        curr_is_affine = is_affine_shape(curr.shape)
+        curr_is_affine = vxm.is_affine_shape(curr.shape)
 
         # Case 1: Dense warp on left, affine on right. Convert affine to disp
-        if not is_affine_shape(next_trf.shape):
+        if not vxm.is_affine_shape(next_trf.shape):
             if curr_is_affine:
                 curr_shape = next_trf.shape[-next_trf.shape[-1] - 1:-1]
                 if shape is not None:

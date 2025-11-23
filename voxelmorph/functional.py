@@ -18,6 +18,7 @@ __all__ = [
     'coords_to_disp',
     'spatial_transform',
     'integrate_disp',
+    'is_affine_shape',
 ]
 
 
@@ -645,3 +646,38 @@ def integrate_disp(
         ).movedim(0, -1)
 
     return disp
+
+
+def is_affine_shape(shape: tuple) -> bool:
+    """
+    Determine whether the given shape represents an N-dimensional affine matrix.
+
+    An affine matrix has shape (..., M, N+1) where:
+    - N is the spatial dimensionality (2 or 3)
+    - M is either N or N+1 (compact or square form)
+
+    Parameters
+    ----------
+    shape : tuple
+        Shape of the tensor to check.
+
+    Returns
+    -------
+    bool
+        True if shape represents an affine matrix, False otherwise.
+    """
+    if len(shape) < 2:
+        return False
+
+    rows, cols = shape[-2], shape[-1]
+
+    # Cols should be N+1 where N is 2 or 3
+    ndim = cols - 1
+    if ndim not in (2, 3):
+        return False
+
+    # rows should be N or N+1
+    if rows not in (ndim, ndim + 1):
+        return False
+
+    return True
