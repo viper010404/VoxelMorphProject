@@ -493,7 +493,7 @@ def random_transform(
     if ne.utils.bernoulli(p=affine_probability, shape=(1,)).item():
 
         # compute meshgrid, it is the target crs
-        meshgrid = nef.volshape_to_ndgrid(size=shape, device=device, stack=True)
+        meshgrid = ne.volshape_to_ndgrid(size=shape, device=device, stack=True)
 
         # convert max_translation from mm to voxel
         # the matrix returned from random_affine() is vox2vox rotating around the image center.
