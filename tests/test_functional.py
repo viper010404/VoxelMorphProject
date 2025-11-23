@@ -189,7 +189,7 @@ def test_params_to_affine_translation_shear():
 
     translation = (1, 2)
 
-    result_affine = vxf.params_to_affine(
+    result_affine = vxm.params_to_affine(
         ndim=2,
         translation=translation,
         shear=9,
@@ -272,7 +272,7 @@ def test_params_to_affine_scaling():
     """
     scale_factors = (2.0, 3.0)
 
-    result_affine = vxf.params_to_affine(
+    result_affine = vxm.params_to_affine(
         ndim=2,
         scale=scale_factors
     ).to(torch.float64)
@@ -293,7 +293,7 @@ def test_params_to_affine_shearing_2d():
 
     # Make an affine with shear
     shear_value = 0.5
-    result_affine = vxf.params_to_affine(
+    result_affine = vxm.params_to_affine(
         ndim=2,
         shear=shear_value
     ).to(torch.float64)
@@ -313,7 +313,7 @@ def test_params_to_affine_shearing_3d():
     """
     shear_values = (0.5, 0.3, 0.7)
 
-    result_affine = vxf.params_to_affine(
+    result_affine = vxm.params_to_affine(
         ndim=3,
         shear=shear_values
     ).to(torch.float64)
@@ -352,7 +352,7 @@ def test_params_to_affine_complex_2d():
     scale = (1.5, 2.0)
     shear = 0.3
 
-    result_affine = vxf.params_to_affine(
+    result_affine = vxm.params_to_affine(
         ndim=2,
         translation=translation,
         rotation=rotation,
