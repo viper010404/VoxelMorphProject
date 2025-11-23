@@ -10,10 +10,54 @@ import neurite.nn.functional as nef
 
 __all__ = [
     'affine_to_disp',
+    'angles_to_rotation_matrix',
     'disp_to_coords',
     'spatial_transform',
     'integrate_disp',
 ]
+
+
+def angles_to_rotation_matrix(
+        rotation: torch.Tensor,
+        degrees: bool = True
+) -> torch.Tensor:
+    """
+    Compute a rotation matrix from the given rotation angles.
+
+    Parameters
+    ----------
+    rotation : Tensor
+        A tensor containing the rotation angles. If `degrees` is True, the angles
+        are in degrees, otherwise they are in radians.
+    degrees : bool, optional
+        Whether to interpret the rotation angles as degrees.
+
+    Returns
+    -------
+    Tensor
+        The computed `(ndim + 1, ndim + 1)` rotation matrix.
+    """
+    rotation = torch.as_tensor(rotation)
+    if degrees:
+        rotation = torch.deg2rad(rotation)
+    rotation = torch.atleast_1d(rotation)
+
+    # build the matrix
+    if len(rotation) == 1:
+        c, s = torch.cos(rotation[0]), torch.sin(rotation[0])
+        matrix = torch.tensor([[c, -s], [s, c]], dtype=torch.float64)
+    elif len(rotation) == 3:
+        c, s = torch.cos(rotation[0]), torch.sin(rotation[0])
+        rx = torch.tensor([[1, 0, 0], [0, c, s], [0, -s, c]], dtype=torch.float64)
+        c, s = torch.cos(rotation[1]), torch.sin(rotation[1])
+        ry = torch.tensor([[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=torch.float64)
+        c, s = torch.cos(rotation[2]), torch.sin(rotation[2])
+        rz = torch.tensor([[c, s, 0], [-s, c, 0], [0, 0, 1]], dtype=torch.float64)
+        matrix = rx @ ry @ rz
+    else:
+        raise ValueError(f'expected 1 (2D) or 3 (3D) rotation angles, got {len(rotation)}')
+
+    return matrix.to(rotation.device)
 
 
 def affine_to_disp(

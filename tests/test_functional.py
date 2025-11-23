@@ -121,7 +121,7 @@ def test_angles_to_rotation_matrix_2d_identity():
     """
     A 2D rotation of 0 deg must yield the 2x2 identity matrix.
     """
-    rotation_matrix = vxf.angles_to_rotation_matrix(torch.tensor(0.0), degrees=True)
+    rotation_matrix = vxm.angles_to_rotation_matrix(torch.tensor(0.0), degrees=True)
     expected = torch.eye(2, dtype=torch.float64)
 
     assert rotation_matrix.shape == (2, 2)
@@ -133,7 +133,7 @@ def test_angles_to_rotation_matrix_2d_90_degrees():
     """
     A 2D rotation of 90 degrees should be [[0, -1], [1, 0]].
     """
-    rotation_matrix = vxf.angles_to_rotation_matrix(torch.tensor(90.0), degrees=True)
+    rotation_matrix = vxm.angles_to_rotation_matrix(torch.tensor(90.0), degrees=True)
 
     expected = torch.tensor(
         [
@@ -150,7 +150,7 @@ def test_angles_to_rotation_matrix_2d_pi_over_2_radians():
     """
     With degrees=False and angle=pi/2, result should match the 90° case.
     """
-    rotation_matrix = vxf.angles_to_rotation_matrix(torch.tensor(torch.pi / 2), degrees=False)
+    rotation_matrix = vxm.angles_to_rotation_matrix(torch.tensor(torch.pi / 2), degrees=False)
     expected = torch.tensor(
         [
             [0.0, -1.0],
@@ -168,7 +168,7 @@ def test_angles_to_rotation_matrix_3d_90_degrees():
      [-1, 0, 0],
      [0, 0, 1]]
     """
-    rotation_matrix = vxf.angles_to_rotation_matrix(torch.tensor((0, 0, 90.0)), degrees=True)
+    rotation_matrix = vxm.angles_to_rotation_matrix(torch.tensor((0, 0, 90.0)), degrees=True)
 
     expected = torch.tensor(
         [
