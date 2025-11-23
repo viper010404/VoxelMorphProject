@@ -311,6 +311,9 @@ def disp_to_coords(
 
     if meshgrid is None:
         meshgrid = ne.volshape_to_ndgrid(size=spatial_shape, device=disp.device, stack=True)
+        assert isinstance(meshgrid, torch.Tensor), (
+            f'Expected torch.Tensor from volshape_to_ndgrid(stack=True). Got {type(meshgrid)}'
+        )
 
     # Normalize each spatial dimension to [-1, 1] for grid_sample
     coords = meshgrid + disp
