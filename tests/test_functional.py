@@ -207,7 +207,7 @@ def test_resize_scale_nearest_int():
           [3, 4]]],
         dtype=torch.int32
     )
-    out = vxf.resize(img, scale_factor=2.0, nearest=True)
+    out = nef.resize(img, scale_factor=2.0, nearest=True)
 
     # Expect each pixel to become a 2×2 block
     expected = torch.tensor(
