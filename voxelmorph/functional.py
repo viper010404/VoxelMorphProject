@@ -264,7 +264,8 @@ def affine_to_disp(
     Parameters
     ----------
     affine : Tensor
-        Affine transformation matrix of shape (N, N+1) or (N+1, N+1).
+        Affine transformation matrix of shape (N, N+1) or (N+1, N+1), or batched
+        affine of shape (B, N, N+1) or (B, N+1, N+1).
         Expected to be a vox2vox target-to-source transformation.
     meshgrid : Tensor, optional
         Pre-computed meshgrid tensor of shape (*spatial_shape, N), where N is the spatial
@@ -506,7 +507,8 @@ def spatial_transform(
     meshgrid: Union[torch.Tensor, None] = None,
     origin_at_center: bool = True,
     non_spatial_dims: Union[Tuple[int, ...], None] = None,
-    align_corners: bool = True
+    align_corners: bool = True,
+    padding_mode: Literal['zeros', 'border', 'reflection'] = 'zeros'
 ) -> torch.Tensor:
     """
     Apply spatial transformation to image using displacement or coordinate field.
@@ -520,18 +522,20 @@ def spatial_transform(
         - (*spatial,) if non_spatial_dims=None
         - (C, *spatial) if non_spatial_dims=(0,)
         - (B, C, *spatial) if non_spatial_dims=(0, 1)
+        - etc...
     trf : torch.Tensor or None
         Transformation field. Can be:
         - Affine matrix: shape (N+1, N+1) or (N, N+1)
-        - Displacement field: shape (*spatial, N)
-        - Coordinate field: shape (*spatial, N)
+        - Batched affine matrix: shape (B, N+1, N+1) or (B, N, N+1)
+        - Displacement field: shape (*spatial, N) or (B, *spatial, N)
+        - Coordinate field: shape (*spatial, N) or (B, *spatial, N)
         - None: returns image unchanged
     mode : {'linear', 'nearest'}, default='linear'
-        Interpolation mode. 'linear' will auto-detect appropriate mode
-        (bilinear/trilinear) based on spatial dimensionality.
+        Interpolation mode. 'linear' will auto-detect appropriate mode (bilinear/trilinear) based
+        on spatial dimensionality.
     isdisp : bool, default=True
-        If True, treat trf as displacement field and convert to coordinates.
-        If False, treat trf as normalized coordinates ready for grid_sample.
+        If True, treat trf as displacement field and convert to coordinates. If False, treat trf as
+        normalized coordinates ready for grid_sample.
     meshgrid : torch.Tensor or None, default=None
         Pre-computed coordinate grid. If None, computed from image shape.
     origin_at_center : bool, default=True
@@ -541,8 +545,11 @@ def spatial_transform(
         - None: pure spatial tensor
         - (0,): first dimension is non-spatial (e.g., channel)
         - (0, 1): first two dimensions are non-spatial (e.g., batch, channel)
+        - etc...
     align_corners : bool, default=True
         Align corners parameter for grid_sample.
+    padding_mode : {'zeros', 'border', 'reflection'}, default='zeros'
+        Padding mode for grid_sample when sampling outside the input bounds.
 
     Returns
     -------
@@ -571,6 +578,13 @@ def spatial_transform(
     >>> warped = spatial_transform(image, disp, non_spatial_dims=(0, 1))
     >>> warped.shape
     torch.Size([2, 3, 64, 64])
+
+    >>> # Batched affine transformations (different transform per batch)
+    >>> image = torch.randn(2, 3, 64, 64)
+    >>> affines = torch.eye(3).unsqueeze(0).repeat(2, 1, 1)  # (2, 3, 3)
+    >>> warped = spatial_transform(image, affines, non_spatial_dims=(0, 1))
+    >>> warped.shape
+    torch.Size([2, 3, 64, 64])
     """
     # Early return for no transformation
     if trf is None:
@@ -582,15 +596,25 @@ def spatial_transform(
     )
     spatial_shape = image.shape[num_non_spatial:]
 
-    # Convert affine matrix to displacement field if needed
-    if trf.ndim == 2:
+    # Single affine: (N+1, N+1) or (N, N+1)
+    # Batched affine: (B, N+1, N+1) or (B, N, N+1)
+    has_affine_ndim = trf.ndim in (2, 3)
+    has_affine_cols = trf.shape[-1] == num_spatial + 1
+    has_affine_rows = trf.shape[-2] in (num_spatial, num_spatial + 1)
+    is_affine = has_affine_ndim and has_affine_cols and has_affine_rows
+
+    if is_affine:
         # Invert affine to get source-to-target mapping for warping
         trf = torch.linalg.inv(trf)
         trf = affine_to_disp(trf, meshgrid, shape=spatial_shape, origin_at_center=origin_at_center)
         isdisp = True
 
     if isdisp:
-        trf = disp_to_coords(trf, meshgrid=meshgrid)
+        # Determine non_spatial_dims for displacement field
+        # If trf has batch dimension, it will be shape (B, *spatial, ndim)
+        trf_has_batch_dim = trf.ndim > (num_spatial + 1)
+        disp_non_spatial_dims = (0,) if trf_has_batch_dim else None
+        trf = disp_to_coords(trf, meshgrid=meshgrid, non_spatial_dims=disp_non_spatial_dims)
 
     if mode == 'linear':
         mode = ne.utils.infer_linear_interpolation_mode(num_spatial)
@@ -609,14 +633,13 @@ def spatial_transform(
 
     # Prepare coordinates for grid_sample (requires batch dimension)
     # Coordinates format: (*spatial, ndim) or (B, *spatial, ndim)
-    # Check if batch dimension already exists
     trf_has_batch_dim = trf.ndim > (num_spatial + 1)
     if not trf_has_batch_dim:
         trf = trf.unsqueeze(0)
 
     # Apply transformation
     transformed = torch.nn.functional.grid_sample(
-        image, trf, align_corners=align_corners, mode=mode
+        image, trf, align_corners=align_corners, mode=mode, padding_mode=padding_mode
     )
 
     # Restore original format
