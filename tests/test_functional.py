@@ -560,7 +560,7 @@ def test_params_to_affine_analytical():
                       [0., 1., 0.]])
 
     # Compose A and B
-    composed = vxf.compose([A, B])
+    composed = vxm.compose([A, B])
 
     # Expected: A @ B (apply B first, then A)
     expected_affine = torch.tensor([[0., -1., 0.],

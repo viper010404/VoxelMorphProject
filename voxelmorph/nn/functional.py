@@ -8,7 +8,6 @@ from typing import List, Union, Optional, Sequence, Literal
 
 # Third-party imports
 import torch
-from torch import Tensor
 import numpy as np
 
 import neurite as ne
@@ -17,7 +16,6 @@ import voxelmorph as vxm
 
 __all__ = [
     "spatial_transform",
-    "compose",
     "smooth_gaussian",
     "perlin",
     "random_disp",
@@ -26,13 +24,13 @@ __all__ = [
 
 
 def spatial_transform(
-    image: Tensor,
-    trf: Union[Tensor, None],
+    image: torch.Tensor,
+    trf: Union[torch.Tensor, None],
     method: Literal['nearest', 'linear'] = 'linear',
     isdisp: bool = True,
-    meshgrid: Union[Tensor, None] = None,
+    meshgrid: Union[torch.Tensor, None] = None,
     origin_at_center: bool = True
-) -> Tensor:
+) -> torch.Tensor:
     """
     Apply spatial transformation to image in (B, C, *spatial) format.
 
@@ -40,9 +38,9 @@ def spatial_transform(
 
     Parameters
     ----------
-    image : Tensor
+    image : torch.Tensor
         Input image with shape (B, C, *spatial).
-    trf : Tensor or None
+    trf : torch.Tensor or None
         Transformation field. Can be:
         - Affine matrix: shape (N+1, N+1) or (N, N+1)
         - Displacement field: shape (*spatial, N)
@@ -52,14 +50,14 @@ def spatial_transform(
         Interpolation mode ('linear' or 'nearest').
     isdisp : bool, default=True
         If True, treat trf as displacement field. If False, treat as coordinates.
-    meshgrid : Tensor or None, default=None
+    meshgrid : torch.Tensor or None, default=None
         Pre-computed coordinate grid.
     origin_at_center : bool, default=True
         Place origin at image center for affine transformations.
 
     Returns
     -------
-    Tensor
+    torch.Tensor
         Transformed image with shape (B, C, *spatial).
 
     Examples
@@ -96,7 +94,7 @@ def smooth_gaussian(
     magnitude: float = 1.0,
     device: Union[torch.device, None] = None,
     method: Literal['blur', 'upsample'] = 'blur'
-) -> Tensor:
+) -> torch.Tensor:
     """
     Generate smooth Gaussian noise in (B, C, *spatial) format.
 
@@ -117,7 +115,7 @@ def smooth_gaussian(
 
     Returns
     -------
-    Tensor
+    torch.Tensor
         Smooth Gaussian noise with shape (B, C, *spatial).
 
     Examples
@@ -167,7 +165,7 @@ def perlin(
     weights: Union[List[float], None] = None,
     device: Union[torch.device, None] = None,
     method: Literal['blur', 'upsample'] = 'blur'
-) -> Tensor:
+) -> torch.Tensor:
     """
     Generate Perlin noise in (B, C, *spatial) format.
 
@@ -194,7 +192,7 @@ def perlin(
 
     Returns
     -------
-    Tensor
+    torch.Tensor
         Perlin noise with shape (B, C, *spatial).
 
     Examples
@@ -253,10 +251,10 @@ def random_disp(
     magnitude: Union[float, List[float]] = 10,
     integrations: int = 0,
     voxsize: float = 1,
-    meshgrid: Tensor = None,
+    meshgrid: torch.Tensor = None,
     device: torch.device = None,
     perlin_method: str = 'upsample'
-) -> Tensor:
+) -> torch.Tensor:
     """
     Generate random displacement field using Perlin noise.
 
@@ -275,7 +273,7 @@ def random_disp(
         Number of integration steps for diffeomorphic transform. If 0, no integration.
     voxsize : float, default=1
         Voxel size for scaling smoothing and magnitude parameters.
-    meshgrid : Tensor or None, default=None
+    meshgrid : torch.Tensor or None, default=None
         Coordinate grid for integration. If None and integrations > 0, computed internally.
     device : torch.device or None, default=None
         Device for tensor allocation. If None, defaults to CPU.
@@ -284,7 +282,7 @@ def random_disp(
 
     Returns
     -------
-    Tensor
+    torch.Tensor
         Displacement field with shape (*spatial, ndim).
 
     Examples
@@ -338,7 +336,7 @@ def random_transform(
     isdisp: bool = True,
     perlin_method: str = 'upsample',
     sampling: bool = True,
-) -> Tensor:
+) -> torch.Tensor:
     """
     generate a randomly sampled transform
 
@@ -403,140 +401,3 @@ def random_transform(
         trf = vxm.functional.disp_to_coords(trf)
 
     return trf
-
-
-def compose(
-    transforms: Sequence[Tensor],
-    interpolation_mode: str = 'bilinear',
-    origin_at_center: bool = True,
-    shape: Sequence[int] | None = None
-) -> Tensor:
-    """
-    Compose a single transform from a series of transforms.
-
-    Supports both affine matrices and dense displacement fields. Returns a displacement
-    field unless all inputs are affine matrices. For transforms [A, B, C], the composed
-    transform T satisfies T(x) = A(B(C(x))), meaning C is applied first, then B, then A.
-
-    Parameters
-    ----------
-    transforms : Sequence[Tensor]
-        List or tuple of affine matrices and/or displacement fields to compose.
-        - Affine matrices: shape (..., N, N+1) or (..., N+1, N+1)
-        - Displacement fields: shape (..., *spatial_shape, N)
-    interpolation_mode : str, optional
-        Interpolation method for composing displacement fields.
-        Options: 'bilinear', 'nearest', 'trilinear'. Default is 'bilinear'.
-    origin_at_center : bool, optional
-        Shift grid origin to image center when converting affine matrices to displacement fields.
-        Default is True.
-    shape : Sequence[int], optional
-        Spatial shape (N dimensions) for converting affine matrices to displacement fields.
-        Only used if the rightmost transform is an affine matrix. If None and the rightmost
-        transform is an affine, you must have at least one displacement field in the list.
-        Incompatible with origin_at_center=False.
-
-    Returns
-    -------
-    Tensor
-        Composed transform as either:
-        - Affine matrix of shape (..., N, N+1) if all inputs are affine
-        - Displacement field of shape (..., *spatial_shape, N) otherwise
-
-    Examples
-    --------
-    >>> # Compose two affine matrices
-    >>> translate = torch.tensor([[1., 0., 10.],
-    ...                           [0., 1., 5.]])
-    >>> scale = torch.tensor([[2., 0., 0.],
-    ...                       [0., 2., 0.]])
-    >>> composed = compose([translate, scale])
-    >>> # Result is affine: scale applied first, then translate
-
-    >>> # Compose affine with displacement field
-    >>> disp = torch.randn(64, 64, 2)
-    >>> affine = torch.tensor([[1., 0., 5.],
-    ...                        [0., 1., 3.]])
-    >>> composed = compose([affine, disp])
-    >>> # Result is displacement field: disp applied first, then affine
-
-    >>> # Compose multiple displacement fields
-    >>> disp1 = torch.randn(64, 64, 2)
-    >>> disp2 = torch.randn(64, 64, 2)
-    >>> composed = compose([disp1, disp2])
-    >>> # Result is displacement field
-
-    Notes
-    -----
-    The composition uses matrix indexing ('ij') consistently. When composing displacement
-    fields, the left field is interpolated using the right field as sampling coordinates.
-    """
-    if len(transforms) == 0:
-        raise ValueError('Cannot compose empty list of transforms')
-
-    if len(transforms) == 1:
-        return transforms[0]
-
-    # Convert all to tensors with floating point dtype
-    safe_transforms = []
-    for transform in transforms:
-        if isinstance(transform, Tensor) and not transform.is_floating_point():
-            transform = transform.float()
-        elif not isinstance(transform, Tensor):
-            transform = torch.as_tensor(transform, dtype=torch.float32)
-        safe_transforms.append(transform)
-
-    # Start from the rightmost transform (last to be applied)
-    curr = transforms[-1]
-
-    # Iterate through remaining transforms in reverse order
-    for next_trf in reversed(transforms[:-1]):
-
-        curr_is_affine = vxm.is_affine_shape(curr.shape)
-
-        # Case 1: Dense warp on left, affine on right. Convert affine to disp
-        if not vxm.is_affine_shape(next_trf.shape):
-            if curr_is_affine:
-                curr_shape = next_trf.shape[-next_trf.shape[-1] - 1:-1]
-                if shape is not None:
-                    curr_shape = shape
-                curr = vxm.functional.affine_to_disp(
-                    affine=curr,
-                    shape=curr_shape,
-                    origin_at_center=origin_at_center
-                )
-
-            # Now both are displacement fields: warp next using curr
-            # This computes: next(x + curr(x))
-            # spatial_transform expects (C, *spatial) format, but displacement is (*spatial, N)
-            ndim = next_trf.shape[-1]
-            next_trf_permuted = next_trf.permute(-1, *range(ndim))  # (*spatial, N) -> (N, *spatial)
-
-            warped = vxm.functional.spatial_transform(
-                image=next_trf_permuted,
-                trf=curr,
-                mode=interpolation_mode,
-                isdisp=True,
-                non_spatial_dims=(0,)
-            )
-
-            # Permute back: (N, *spatial) -> (*spatial, N)
-            warped = warped.permute(*range(1, ndim + 1), 0)
-            curr = curr + warped
-
-        # Case 2: Affine on left, dense warp on right
-        elif not curr_is_affine:
-            curr = vxm.functional.affine_to_disp(
-                next_trf,
-                shape=curr.shape[-curr.shape[-1] - 1: -1],  # Spatial shape from curr
-                origin_at_center=origin_at_center,
-                warp_right=curr
-            )
-
-        # Case 3: Both are affine matrices
-        else:
-            next_sq = vxm.make_square_affine(next_trf)
-            curr_sq = vxm.make_square_affine(curr)
-            curr = (next_sq @ curr_sq)[..., :-1, :]  # Remove last row to return compact form
-
-    return curr

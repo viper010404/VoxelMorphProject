@@ -19,6 +19,7 @@ __all__ = [
     'spatial_transform',
     'integrate_disp',
     'constant_shift_field',
+    'compose',
     'is_affine_shape',
     'make_square_affine',
 ]
@@ -648,6 +649,143 @@ def integrate_disp(
         ).movedim(0, -1)
 
     return disp
+
+
+def compose(
+        transforms: Sequence[torch.Tensor],
+        interpolation_mode: str = 'bilinear',
+        origin_at_center: bool = True,
+        shape: Union[Sequence[int], None] = None
+) -> torch.Tensor:
+    """
+    Compose a single transform from a series of transforms.
+
+    Supports both affine matrices and dense displacement fields. Returns a displacement
+    field unless all inputs are affine matrices. For transforms [A, B, C], the composed
+    transform T satisfies T(x) = A(B(C(x))), meaning C is applied first, then B, then A.
+
+    Parameters
+    ----------
+    transforms : Sequence[Tensor]
+        List or tuple of affine matrices and/or displacement fields to compose.
+        - Affine matrices: shape (..., N, N+1) or (..., N+1, N+1)
+        - Displacement fields: shape (..., *spatial_shape, N)
+    interpolation_mode : str, default='bilinear'
+        Interpolation method for composing displacement fields.
+        Options: 'bilinear', 'nearest', 'trilinear'.
+    origin_at_center : bool, default=True
+        Shift grid origin to image center when converting affine matrices to displacement fields.
+    shape : Sequence[int] or None, default=None
+        Spatial shape (N dimensions) for converting affine matrices to displacement fields.
+        Only used if the rightmost transform is an affine matrix. If None and the rightmost
+        transform is an affine, you must have at least one displacement field in the list.
+        Incompatible with origin_at_center=False.
+
+    Returns
+    -------
+    torch.Tensor
+        Composed transform as either:
+        - Affine matrix of shape (..., N, N+1) if all inputs are affine
+        - Displacement field of shape (..., *spatial_shape, N) otherwise
+
+    Examples
+    --------
+    >>> import voxelmorph as vxm
+    >>> # Compose two affine matrices
+    >>> translate = torch.tensor([[1., 0., 10.],
+    ...                           [0., 1., 5.]])
+    >>> scale = torch.tensor([[2., 0., 0.],
+    ...                       [0., 2., 0.]])
+    >>> composed = vxm.compose([translate, scale])
+    >>> # Result is affine: scale applied first, then translate
+
+    >>> # Compose affine with displacement field
+    >>> disp = torch.randn(64, 64, 2)
+    >>> affine = torch.tensor([[1., 0., 5.],
+    ...                        [0., 1., 3.]])
+    >>> composed = vxm.compose([affine, disp])
+    >>> # Result is displacement field: disp applied first, then affine
+
+    >>> # Compose multiple displacement fields
+    >>> disp1 = torch.randn(64, 64, 2)
+    >>> disp2 = torch.randn(64, 64, 2)
+    >>> composed = vxm.compose([disp1, disp2])
+    >>> # Result is displacement field
+
+    Notes
+    -----
+    The composition uses matrix indexing ('ij') consistently. When composing displacement
+    fields, the left field is interpolated using the right field as sampling coordinates.
+    """
+    if len(transforms) == 0:
+        raise ValueError('Cannot compose empty list of transforms')
+
+    if len(transforms) == 1:
+        return transforms[0]
+
+    # Convert all to tensors with floating point dtype
+    safe_transforms = []
+    for transform in transforms:
+        if isinstance(transform, torch.Tensor) and not transform.is_floating_point():
+            transform = transform.float()
+        elif not isinstance(transform, torch.Tensor):
+            transform = torch.as_tensor(transform, dtype=torch.float32)
+        safe_transforms.append(transform)
+
+    # Start from the rightmost transform (last to be applied)
+    curr = transforms[-1]
+
+    # Iterate through remaining transforms in reverse order
+    for next_trf in reversed(transforms[:-1]):
+
+        curr_is_affine = is_affine_shape(curr.shape)
+
+        # Case 1: Dense warp on left, affine on right. Convert affine to disp
+        if not is_affine_shape(next_trf.shape):
+            if curr_is_affine:
+                curr_shape = next_trf.shape[-next_trf.shape[-1] - 1:-1]
+                if shape is not None:
+                    curr_shape = shape
+                curr = affine_to_disp(
+                    affine=curr,
+                    shape=curr_shape,
+                    origin_at_center=origin_at_center
+                )
+
+            # Now both are displacement fields: warp next using curr
+            # This computes: next(x + curr(x))
+            # spatial_transform expects (C, *spatial) format, but displacement is (*spatial, N)
+            ndim = next_trf.shape[-1]
+            next_trf_permuted = next_trf.permute(-1, *range(ndim))  # (*spatial, N) -> (N, *spatial)
+
+            warped = spatial_transform(
+                image=next_trf_permuted,
+                trf=curr,
+                mode=interpolation_mode,
+                isdisp=True,
+                non_spatial_dims=(0,)
+            )
+
+            # Permute back: (N, *spatial) -> (*spatial, N)
+            warped = warped.permute(*range(1, ndim + 1), 0)
+            curr = curr + warped
+
+        # Case 2: Affine on left, dense warp on right
+        elif not curr_is_affine:
+            curr = affine_to_disp(
+                next_trf,
+                shape=curr.shape[-curr.shape[-1] - 1: -1],  # Spatial shape from curr
+                origin_at_center=origin_at_center,
+                warp_right=curr
+            )
+
+        # Case 3: Both are affine matrices
+        else:
+            next_sq = make_square_affine(next_trf)
+            curr_sq = make_square_affine(curr)
+            curr = (next_sq @ curr_sq)[..., :-1, :]  # Remove last row to return compact form
+
+    return curr
 
 
 def constant_shift_field(
