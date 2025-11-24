@@ -19,7 +19,7 @@ def test_spatial_transformer_identity_2d():
     This test directly exercises the SpatialTransformer class to catch axis convention bugs.
     """
     # Create SpatialTransformer for 2D
-    transformer = vxm.nn.modules.SpatialTransformer(size=(4, 4), device="cpu")
+    transformer = vxm.nn.modules.SpatialTransformer(device="cpu")
 
     # Create a simple test image with known pattern
     img = torch.tensor([[[[1., 0., 0., 0.],
@@ -46,7 +46,7 @@ def test_spatial_transformer_identity_3d():
     Test SpatialTransformer with zero displacement field in 3D.
     """
     # Create SpatialTransformer for 3D
-    transformer = vxm_modules.SpatialTransformer(size=(3, 3, 3), device="cpu")
+    transformer = vxm_modules.SpatialTransformer(device="cpu")
 
     # Create a simple 3D test image
     img = torch.zeros(1, 1, 3, 3, 3, dtype=torch.float32)
@@ -72,7 +72,7 @@ def test_spatial_transformer_translation_2d():
     This test would have caught the axis convention bug in PR #652.
     """
     # Create SpatialTransformer for 2D
-    transformer = vxm_modules.SpatialTransformer(size=(3, 3), device="cpu")
+    transformer = vxm_modules.SpatialTransformer(device="cpu")
 
     # Create test image with 1 in top-left corner
     img = torch.tensor([[[[1., 0., 0.],
@@ -103,7 +103,7 @@ def test_spatial_transformer_translation_3d():
     Test SpatialTransformer with known translation in 3D.
     """
     # Create SpatialTransformer for 3D
-    transformer = vxm_modules.SpatialTransformer(size=(2, 2, 2), device="cpu")
+    transformer = vxm_modules.SpatialTransformer(device="cpu")
 
     # Create test image with 1 in corner
     img = torch.zeros(1, 1, 2, 2, 2, dtype=torch.float32)
@@ -130,7 +130,7 @@ def test_spatial_transformer_rotation_2d():
     Test SpatialTransformer with rotation to verify axis convention.
     """
     # Create SpatialTransformer for 2D
-    transformer = vxm_modules.SpatialTransformer(size=(3, 3), device="cpu")
+    transformer = vxm_modules.SpatialTransformer(device="cpu")
 
     # Create test image with L-shape pattern
     img = torch.tensor([[[[1., 1., 0.],
@@ -167,7 +167,7 @@ def test_spatial_transformer_different_sizes():
     sizes = [(2, 2), (3, 3), (2, 2, 2), (3, 3, 3)]
 
     for size in sizes:
-        transformer = vxm_modules.SpatialTransformer(size=size, device="cpu")
+        transformer = vxm_modules.SpatialTransformer(device="cpu")
 
         # Create test image
         if len(size) == 2:
@@ -193,7 +193,7 @@ def test_spatial_transformer_device_consistency():
     Test SpatialTransformer works on different devices (if available).
     """
     # Test on CPU
-    transformer_cpu = vxm_modules.SpatialTransformer(size=(3, 3), device="cpu")
+    transformer_cpu = vxm_modules.SpatialTransformer(device="cpu")
     img_cpu = torch.randn(1, 1, 3, 3, dtype=torch.float32)
     disp_cpu = torch.zeros(1, 2, 3, 3, dtype=torch.float32)
     result_cpu = transformer_cpu(img_cpu, disp_cpu)
@@ -204,7 +204,7 @@ def test_spatial_transformer_device_consistency():
 
     # Test on CUDA if available
     if torch.cuda.is_available():
-        transformer_cuda = vxm_modules.SpatialTransformer(size=(3, 3), device="cuda")
+        transformer_cuda = vxm_modules.SpatialTransformer(device="cuda")
         img_cuda = torch.randn(1, 1, 3, 3, dtype=torch.float32, device="cuda")
         disp_cuda = torch.zeros(1, 2, 3, 3, dtype=torch.float32, device="cuda")
         result_cuda = transformer_cuda(img_cuda, disp_cuda)
@@ -232,11 +232,7 @@ def test_spatial_transformer_interpolation_modes():
     modes = ["bilinear", "nearest", "bicubic"]
 
     for mode in modes:
-        transformer = vxm_modules.SpatialTransformer(
-            size=(3, 3), 
-            interpolation_mode=mode, 
-            device="cpu"
-        )
+        transformer = vxm_modules.SpatialTransformer(interpolation_mode=mode, device="cpu")
         result = transformer(img, disp)
 
         assert result.shape == img.shape
@@ -258,19 +254,11 @@ def test_spatial_transformer_align_corners():
     disp[0, 0, 0, 0] = 0.1  # Small displacement
 
     # Test with align_corners=True
-    transformer_true = vxm_modules.SpatialTransformer(
-        size=(2, 2), 
-        align_corners=True, 
-        device="cpu"
-    )
+    transformer_true = vxm_modules.SpatialTransformer(align_corners=True, device="cpu")
     result_true = transformer_true(img, disp)
 
     # Test with align_corners=False
-    transformer_false = vxm_modules.SpatialTransformer(
-        size=(2, 2), 
-        align_corners=False, 
-        device="cpu"
-    )
+    transformer_false = vxm_modules.SpatialTransformer(align_corners=False, device="cpu")
     result_false = transformer_false(img, disp)
 
     # Results should be different but both valid
@@ -289,7 +277,7 @@ def test_spatial_transformer_vs_functional_consistency():
     # For now, let's just test that both can be called without errors.
 
     # Test SpatialTransformer
-    transformer = vxm_modules.SpatialTransformer(size=(3, 3), device="cpu")
+    transformer = vxm_modules.SpatialTransformer(device="cpu")
     img = torch.tensor([[[[1., 0., 0.],
                          [0., 0., 0.],
                          [0., 0., 0.]]]], dtype=torch.float32)
@@ -315,7 +303,7 @@ def test_spatial_transformer_translation_precise():
     This test validates the precision of the spatial transformation.
     """
     # Create SpatialTransformer for 2D
-    transformer = vxm_modules.SpatialTransformer(size=(5, 5), device="cpu")
+    transformer = vxm_modules.SpatialTransformer(device="cpu")
 
     # Create image with pixel at (2,2) - center of 5x5 grid
     img = torch.zeros(1, 1, 5, 5, dtype=torch.float32)
@@ -355,7 +343,7 @@ def test_spatial_transformer_invertibility():
     This validates that the spatial transformer behaves consistently.
     """
     # Create SpatialTransformer for 2D
-    transformer = vxm_modules.SpatialTransformer(size=(4, 4), device="cpu")
+    transformer = vxm_modules.SpatialTransformer(device="cpu")
 
     # Create test image
     img = torch.randn(1, 1, 4, 4, dtype=torch.float32)
@@ -389,7 +377,7 @@ def test_spatial_transformer_error_handling():
     """
     Test SpatialTransformer error handling for invalid inputs.
     """
-    transformer = vxm_modules.SpatialTransformer(size=(3, 3), device="cpu")
+    transformer = vxm_modules.SpatialTransformer(device="cpu")
 
     # Test with wrong number of dimensions
     img_wrong_dims = torch.randn(1, 3, 3)  # Missing channel dimension
