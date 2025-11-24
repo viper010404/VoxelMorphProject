@@ -158,16 +158,14 @@ class IntegrateVelocityField(nn.Module):
     Examples
     -------
     ### Integrate a 2D velocity field over multiple steps:
-    >>> shape = (128, 128)  # 2D spatial grid
-    >>> integrator = IntegrateVelocityField(shape, steps=256)
+    >>> integrator = IntegrateVelocityField(steps=256)
     >>> velocity_field = torch.randn(1, 2, 128, 128)  # (B, C, H, W)
     >>> disp = integrator(velocity_field)
     >>> disp.shape
     torch.Size([1, 2, 128, 128])
 
     ### Perform integration on a 3D velocity field with a single scaling step:
-    >>> shape = (64, 64, 64)  # 3D spatial grid
-    >>> integrator = IntegrateVelocityField(shape, steps=1)
+    >>> integrator = IntegrateVelocityField(steps=1)
     >>> velocity_field = torch.randn(1, 3, 64, 64, 64)  # (B, C, D, H, W)
     >>> disp = integrator(velocity_field)
     >>> disp.shape
@@ -175,29 +173,30 @@ class IntegrateVelocityField(nn.Module):
     """
 
     def __init__(
-        self, shape: tuple,
+        self,
+        shape: Optional[tuple] = None,
         steps: int = 1,
         interpolation_mode: str = "bilinear",
-        align_corners: bool = False,
-        device: str = "cpu"
+        align_corners: bool = True,
+        device: Optional[str] = None
     ):
         """
         Initialize `IntegrateVelocityField`
 
         Parameters
         ----------
-        shape : tuple
-            Shape of the input velocity field (excluding batch and channel dimensions).
-        steps : int, optional
+        shape : tuple or None, optional
+            Deprecated. No longer used. Kept for backward compatibility.
+        steps : int, default=1
             Number of integration steps. A higher value leads to a more smooth and accurate
-            integration at the cost of higher/longer computation. Default is 1.
-        interpolation_mode : str
-            Algorithm used for interpolating the warped image. Default is  'bilinear'. Options are:
+            integration at the cost of higher/longer computation.
+        interpolation_mode : str, default='bilinear'
+            Algorithm used for interpolating the warped image. Options are:
             'bilinear' | 'nearest' | 'bicubic'.
-        align_corners : bool
+        align_corners : bool, default=True
             Map the corner points of the moving image to the corner points of the warped image.
-        device : str
-            Device to construct and hold the identity grid.
+        device : str or None, optional
+            Deprecated. No longer used. Kept for backward compatibility.
         """
 
         super().__init__()
@@ -209,7 +208,10 @@ class IntegrateVelocityField(nn.Module):
         self.scale = 1.0 / (2 ** self.steps)  # Initial downscaling factor
 
         # Make the transformer which will perform the warping operation
-        self.transformer = SpatialTransformer(shape, interpolation_mode, align_corners, device)
+        self.transformer = SpatialTransformer(
+            interpolation_mode=interpolation_mode,
+            align_corners=align_corners
+        )
 
     def forward(self, velocity_field: torch.Tensor) -> torch.Tensor:
         """
