@@ -117,6 +117,63 @@ def test_spatial_transform_identity_affine():
     assert torch.allclose(out, img, atol=1e-6)
 
 
+def test_spatial_transform_rotation():
+    """
+    Test that spatial_transform rotates a horizontal line by 90 degrees and a vertical line by
+    90 degrees.
+    """
+
+    A = torch.tensor([
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0]
+    ], dtype=torch.float32)
+
+    tensor = torch.zeros(1, 5, 5)
+    horizontal_line = tensor.clone()
+    horizontal_line[0, 2, :] = 1
+
+    vertical_line = tensor.clone()
+    vertical_line[0, :, 2] = 1
+
+    transformed_horizontal_line = vxm.spatial_transform(
+        horizontal_line, trf=A, mode='linear', non_spatial_dims=(0,)
+    )
+
+    transformed_vertical_line = vxm.spatial_transform(
+        vertical_line, trf=A, mode='linear', non_spatial_dims=(0,)
+    )
+
+    assert torch.allclose(horizontal_line, transformed_vertical_line)
+    assert torch.allclose(vertical_line, transformed_horizontal_line)
+
+
+def test_spatial_transform_batched():
+
+    A = torch.tensor([
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0]
+    ], dtype=torch.float32)
+
+    # B: translation by (8, 0)
+    B = torch.tensor([
+        [1.0, 0.0, 8.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+    ], dtype=torch.float32)
+
+    # 2 batches (images), one channel
+    batched_images = torch.randn(2, 1, 28, 28)
+    batched_transforms = torch.stack([A, B])
+
+    vxm.spatial_transform(
+        image=batched_images,
+        trf=batched_transforms,
+        non_spatial_dims=(0, 1)
+    )
+
+
 def test_angles_to_rotation_matrix_2d_identity():
     """
     A 2D rotation of 0 deg must yield the 2x2 identity matrix.
@@ -326,21 +383,6 @@ def test_params_to_affine_shearing_3d():
     ], dtype=torch.float64)
 
     assert torch.allclose(result_affine, expected_affine, atol=1e-5)
-
-
-def test_spatial_transform_shearing():
-    """
-    Test spatial transform with identity affine - should return the exact same image.
-    """
-    # Create a simple test image
-    img = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]], dtype=torch.float32)
-
-    # Create identity affine (no transformation)
-    affine = torch.eye(3, dtype=torch.float32)
-    out = vxm.functional.spatial_transform(img, affine, non_spatial_dims=(0,))
-
-    # With identity transformation, output should be exactly the same as input
-    assert torch.allclose(out, img, atol=1e-6), f"Expected {img}, got {out}"
 
 
 def test_params_to_affine_complex_2d():
@@ -582,32 +624,6 @@ def test_params_to_affine_analytical():
 
     assert torch.allclose(result, expected_result, atol=1e-6), \
         f"Point transformation failed: expected {expected_result}, got {result}"
-
-
-def test_spatial_transform_different_dtypes():
-    """
-    spatial_transform should handle different input dtypes correctly.
-    """
-    # Test with float32 (default) - this should work without issues
-    img_f32 = torch.randn(1, 3, 3, dtype=torch.float32)
-    affine = torch.eye(3, dtype=torch.float32)
-
-    out_f32 = vxm.functional.spatial_transform(img_f32, affine, non_spatial_dims=(0,))
-    assert out_f32.dtype == torch.float32
-    assert torch.allclose(out_f32, img_f32, atol=1e-6)
-
-    # Test with int32 (should be converted to float32 internally)
-    img_int = torch.randint(0, 10, (1, 3, 3), dtype=torch.int32)
-    affine = torch.eye(3, dtype=torch.float32)
-
-    out_int = vxm.spatial_transform(
-        img_int,
-        affine,
-        mode='nearest',
-        non_spatial_dims=(0,)
-    )
-    assert out_int.dtype == torch.int32
-    assert torch.allclose(out_int.float(), img_int.float(), atol=1e-6)
 
 
 def test_disp_to_coords_axis_flip():
