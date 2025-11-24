@@ -13,7 +13,7 @@ import torch.nn.functional as nnf
 
 # Custom imports
 import neurite as ne
-import neurite.nn.functional as nef
+import voxelmorph as vxm
 
 __all__ = [
     "SpatialTransformer",
@@ -26,59 +26,43 @@ class SpatialTransformer(nn.Module):
     """
     N-D Spatial transformation according to a deformation field.
 
-    Uses a deformation field to transform the moving image.
+    Wrapper around voxelmorph.nn.functional.spatial_transform that maintains the
+    nn.Module interface for composability in neural network architectures.
 
     References
     ----------
     If you find this helpful, please cite the following paper:
 
     VoxelMorph: A Learning Framework for Deformable Medical Image Registration
-    G. Balakrishnan, A. Zhao, M. R. Sabuncu, J. Guttag, A.V. Dalca. 
+    G. Balakrishnan, A. Zhao, M. R. Sabuncu, J. Guttag, A.V. Dalca.
     IEEE TMI: Transactions on Medical Imaging. 38(8). pp 1788-1800. 2019.
     """
 
     def __init__(
         self,
-        size: Sequence[int],
         interpolation_mode: str = "bilinear",
-        align_corners: bool = False,
-        device: Union[str, torch.device] = "cpu",
+        align_corners: bool = True,
+        device: Optional[Union[str, torch.device]] = None,
     ):
         """
         Initialize `SpatialTransformer`.
 
         Parameters
         ----------
-        size : tuple[int]
-            Expected size of `moving_image` (input image to be warped) for the forward pass.
-        interpolation_mode : str
-            Algorithm used for interpolating the warped image. Default is  'bilinear'. Options are:
+        size : tuple[int] or None, optional
+            Deprecated. No longer used. Kept for backward compatibility.
+        interpolation_mode : str, default='bilinear'
+            Algorithm used for interpolating the warped image. Options are:
             'bilinear' | 'nearest' | 'bicubic'.
-        align_corners : bool
+        align_corners : bool, default=True
             Map the corner points of the moving image to the corner points of the warped image.
-        device : str
-            Device to construct and hold the identity grid.
+        device : str or torch.device or None, optional
+            Deprecated. No longer used. Kept for backward compatibility.
         """
         super().__init__()
 
-        self.size = size
-        self.device = device
         self.interpolation_mode = interpolation_mode
         self.align_corners = align_corners
-
-        # Make identity grid, used to create absolute grid location from displacement
-        identity_grid = ne.volshape_to_ndgrid(size=size, device=device, stack=True)
-        identity_grid = identity_grid.unsqueeze(0)  # Add batch dimension
-
-        # convert to grid_sample axis convention. Size is |Z|Y|X| for 3D, |Y|X| for 2D
-        # The last axis should be ordered as [X, Y, (Z, ...)] to match grid_sample expectations
-        identity_grid = identity_grid.flip(-1)
-
-        self.register_buffer(
-            name='identity_grid',
-            tensor=identity_grid,
-            persistent=False  # Don't save to state dict
-        )
 
     def forward(
         self,
@@ -86,7 +70,7 @@ class SpatialTransformer(nn.Module):
         deformation_field: torch.Tensor
     ) -> torch.Tensor:
         """
-        Forward pass of `SpatialTransformer`
+        Forward pass of `SpatialTransformer`.
 
         Parameters
         ----------
@@ -106,66 +90,52 @@ class SpatialTransformer(nn.Module):
         Notes
         -----
         - Expects deformation_field in channels-first format: (B, ndim, *spatial_dims)
-        - Internally converts to (B, *spatial_dims, ndim) for PyTorch's grid_sample
+        - Processes each batch element independently since vxm.functional.spatial_transform
+          expects displacement fields without batch dimension
         """
-
-        # Validate the dimensions of the input
-        if moving_image.dim() < 4 or deformation_field.dim() != moving_image.dim():
+        # Validate dimensions
+        if moving_image.dim() < 4:
             raise ValueError(
-                "Expected `moving_image` to have at least 4 dimensions and for "
-                "`deformation_field` to match `moving_image` dimensions, got "
-                f"moving_image.dim()={moving_image.dim()}, "
-                f"deformation_field.dim()={deformation_field.dim()}"
+                f"Expected moving_image to have at least 4 dimensions (B, C, *spatial), "
+                f"got {moving_image.dim()} dimensions with shape {moving_image.shape}"
             )
 
-        # Wow, this is legacy! Neither Adrian nor I know why the dims need to be permuted...
-        # Well, at least that's what he said in his code
-        deformation_field = deformation_field.moveaxis(1, -1).contiguous()
+        if deformation_field.dim() != moving_image.dim():
+            raise ValueError(
+                f"Expected moving_image and deformation_field to have the same number of "
+                f"dimensions, got moving_image.dim()={moving_image.dim()}, deformation_field.dim()"
+                f"={deformation_field.dim()}"
+            )
 
-        # Warp the identity grid with the deformation field
-        warped_grid = self.identity_grid + deformation_field
+        batch_size = moving_image.shape[0]
 
-        # Normalize the axes so the range does not exceed the interval [-1, 1]
-        warped_grid = self._normalize_warped_grid(warped_grid)
+        # Convert deformation field from (B, ndim, *spatial) to (B, *spatial, ndim)
+        deformation_field = deformation_field.moveaxis(1, -1)
 
-        # Sample grid
-        warped_image = nnf.grid_sample(
-            input=moving_image,
-            grid=warped_grid,
-            mode=self.interpolation_mode,
-            align_corners=self.align_corners,
-            padding_mode="border"
-        )
+        # Process each batch element independently
+        # vxm.functional.spatial_transform expects disp as (*spatial, ndim) without batch
+        warped_batch = []
+        for b in range(batch_size):
+            # Extract single batch element
+            img_b = moving_image[b]  # (C, *spatial)
+            disp_b = deformation_field[b]  # (*spatial, ndim)
 
-        return warped_image
+            # Apply spatial transform
+            warped_b = vxm.functional.spatial_transform(
+                image=img_b,
+                trf=disp_b,
+                mode=self.interpolation_mode,
+                isdisp=True,
+                meshgrid=None,
+                origin_at_center=True,
+                non_spatial_dims=(0,),  # First dim is channel
+                align_corners=self.align_corners,
+                padding_mode='zeros'
+            )
+            warped_batch.append(warped_b)
 
-    def _normalize_warped_grid(
-        self,
-        warped_grid: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Normalize a warped grid to make PyTorch `grid_sample()` happy!
-
-        PyTorch's `grid_sample()` requires coordinates in the range [-1, 1].
-        This function scales and shifts the warped grid accordingly.
-
-        Parameters
-        ----------
-        warped_grid : torch.Tensor
-            The resultant of the identity grid and the deformation field.
-
-        Returns
-        -------
-        torch.Tensor
-            The warped grid rescaled to the range [-1, 1] for each spatial axis
-        """
-
-        for i, dim in enumerate(self.size):
-
-            # Rescale each dimension individually
-            warped_grid[..., i] = 2 * (warped_grid[..., i] / (dim - 1) - 0.5)
-
-        return warped_grid
+        # Stack back to (B, C, *spatial)
+        return torch.stack(warped_batch, dim=0)
 
 
 class IntegrateVelocityField(nn.Module):
