@@ -154,9 +154,7 @@ class VxmPairwise(nn.Module):
             )
 
         # Initialize the spatial transformer with spatial shape
-        self.spatial_transformer = vxm.nn.modules.SpatialTransformer(
-            size=self.spatial_shape, device=self.device
-        )
+        self.spatial_transformer = vxm.nn.modules.SpatialTransformer(device=self.device)
 
     def forward(
         self,
