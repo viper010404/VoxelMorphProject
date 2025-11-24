@@ -174,6 +174,65 @@ def test_spatial_transform_batched():
     )
 
 
+def test_spatial_transform_rotation_translation_batched():
+    """
+    Test that spatial_transform correctly applies different affine transformations to each batch
+    element.
+
+    This test verifies batched spatial transformations where:
+    - Batch element 0: A 90-degree counter-clockwise rotation matrix transforms a horizontal line
+      (at row 2) into a vertical line (at column 2)
+    - Batch element 1: A translation matrix (shifts by 1 pixel in x-direction) transforms a 
+      horizontal line at row 2 to row 3
+
+    The input is a batch of 2 images, each containing a horizontal line at row 2 (middle row).
+    After transformation, batch element 0 should have a vertical line at column 2, and batch 
+    element 1 should have a horizontal line at row 3.
+    """
+    A = torch.tensor([
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0]
+    ], dtype=torch.float32)
+
+    B = torch.tensor([
+        [1.0, 0.0, 1.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+    ], dtype=torch.float32)
+
+    tensor = torch.zeros(2, 1, 5, 5)
+    horizontal_lines = tensor.clone()
+    horizontal_lines[:, 0, 2, :] = 1
+
+    batched_transforms = torch.stack([A, B])
+
+    # Apply batched transformation
+    transformed = vxm.spatial_transform(
+        horizontal_lines, trf=batched_transforms, mode='linear', non_spatial_dims=(0, 1)
+    )
+
+    transformed_batch_element_0 = torch.zeros(1, 5, 5)
+    transformed_batch_element_0[0, :, 2] = 1
+
+    transformed_batch_element_1 = torch.zeros(1, 5, 5)
+    transformed_batch_element_1[0, 3, :] = 1
+
+    # Verify batch element 0: rotation transforms horizontal line to vertical line
+    assert torch.allclose(transformed[0], transformed_batch_element_0), (
+        f"Batch element 0 failed: Horizontal line should map to a vertical line after 90 degree "
+        f"rotation, but got shape {transformed[0].shape} with max diff "
+        f"{torch.max(torch.abs(transformed[0] - transformed_batch_element_0))}"
+    )
+
+    # Verify batch element 1: translation shifts horizontal line from row 2 to row 3
+    assert torch.allclose(transformed[1], transformed_batch_element_1), (
+        f"Batch element 1 failed: Horizontal line at row 2 should map to a horizontal line at "
+        f"row 3 after translation by (1, 0), but got shape {transformed[1].shape} with max diff "
+        f"{torch.max(torch.abs(transformed[1] - transformed_batch_element_1))}"
+    )
+
+
 def test_angles_to_rotation_matrix_2d_identity():
     """
     A 2D rotation of 0 deg must yield the 2x2 identity matrix.
