@@ -283,7 +283,8 @@ def affine_to_disp(
     Returns
     -------
     Tensor
-        Displacement field of shape (*spatial_shape, N).
+        Displacement field of shape (*spatial_shape, N) for single affine, or
+        (B, *spatial_shape, N) for batched affine.
 
     Examples
     --------
@@ -302,6 +303,12 @@ def affine_to_disp(
     >>> # Compose affine with existing displacement field
     >>> warp = torch.randn(64, 64, 2)
     >>> composed = affine_to_disp(affine, shape=(64, 64), warp_right=warp)
+
+    >>> # Batched affine matrices
+    >>> affines = torch.eye(3).unsqueeze(0).repeat(2, 1, 1)  # (2, 3, 3)
+    >>> disp = affine_to_disp(affines, shape=(64, 64))
+    >>> disp.shape
+    torch.Size([2, 64, 64, 2])
     """
     if meshgrid is None:
         if shape is None:
@@ -314,6 +321,10 @@ def affine_to_disp(
     assert isinstance(meshgrid, torch.Tensor)
     ndim = meshgrid.shape[-1]
     spatial_shape = meshgrid.shape[:-1]
+
+    # Check if affine is batched
+    is_batched = affine.ndim == 3
+    batch_size = affine.shape[0] if is_batched else None
 
     if affine.shape[-1] != ndim + 1:
         raise ValueError(
@@ -351,7 +362,11 @@ def affine_to_disp(
     out = out - mesh  # Subtract original mesh to get displacement
     out = out.transpose(-2, -1)
 
-    disp = out.reshape(*spatial_shape, ndim)
+    # Reshape to include batch dimension if affine was batched
+    if is_batched:
+        disp = out.reshape(batch_size, *spatial_shape, ndim)
+    else:
+        disp = out.reshape(*spatial_shape, ndim)
 
     return disp
 
