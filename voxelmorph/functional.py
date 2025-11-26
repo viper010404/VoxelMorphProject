@@ -25,6 +25,7 @@ __all__ = [
     'upsample_noise',
     'smooth_gaussian',
     'fractal_noise',
+    'random_disp',
 ]
 
 
@@ -1270,3 +1271,131 @@ def fractal_noise(
     noise *= magnitude / noise.std()
 
     return noise
+
+
+def random_disp(
+    shape: Sequence[int],
+    scales: Union[float, int, Sequence[Union[float, int]]] = 10,
+    magnitude: Union[float, int] = 10,
+    integrations: int = 0,
+    voxsize: Union[float, int] = 1,
+    meshgrid: Union[torch.Tensor, None] = None,
+    non_spatial_dims: Union[Sequence[int], None] = None,
+    device: Union[torch.device, None] = None,
+    method: Literal['blur', 'upsample'] = 'upsample'
+) -> torch.Tensor:
+    """
+    Generate random displacement field using fractal noise.
+
+    Creates a displacement field by generating independent fractal noise for each spatial
+    dimension and stacking them along the last dimension.
+
+    Parameters
+    ----------
+    shape : Sequence[int]
+        Shape of the displacement field. Interpretation depends on non_spatial_dims:
+        - non_spatial_dims=None: (*spatial,) pure spatial, output is (*spatial, ndim)
+        - non_spatial_dims=(0,): (B, *spatial), output is (B, *spatial, ndim)
+    scales : float, int, or Sequence[float or int], default=10
+        Smoothing scale(s) for fractal noise, divided by voxsize. Interpretation depends
+        on method:
+        - method='blur': sigma values for Gaussian smoothing
+        - method='upsample': downsampling factors for upsampled noise
+    magnitude : float or int, default=10
+        Standard deviation of displacement in voxel coordinates, divided by voxsize.
+    integrations : int, default=0
+        Number of integration steps for diffeomorphic transform. If 0, no integration.
+    voxsize : float or int, default=1
+        Voxel size for scaling smoothing and magnitude parameters.
+    meshgrid : torch.Tensor or None, default=None
+        Coordinate grid for integration. If None and integrations > 0, computed internally.
+    non_spatial_dims : Sequence of int or None, default=None
+        Indices of non-spatial dimensions (only batch dimension supported for displacement):
+        - None: tensor is pure spatial (*spatial,)
+        - (0,): first dim is batch (B, *spatial)
+    device : torch.device or None, default=None
+        Device for tensor allocation.
+    method : {'blur', 'upsample'}, default='upsample'
+        Noise generation method:
+        - 'blur': Generate noise and apply Gaussian smoothing (higher quality)
+        - 'upsample': Generate coarse noise and upsample (faster, lower memory)
+
+    Returns
+    -------
+    torch.Tensor
+        Displacement field:
+        - (*spatial, ndim) if non_spatial_dims=None
+        - (B, *spatial, ndim) if non_spatial_dims=(0,)
+
+    Examples
+    --------
+    >>> # Pure spatial 2D displacement field
+    >>> disp = random_disp(shape=(64, 64), scales=5.0, magnitude=3.0)
+    >>> disp.shape
+    torch.Size([64, 64, 2])
+
+    >>> # 3D displacement with integration
+    >>> disp = random_disp(shape=(32, 32, 32), integrations=5)
+    >>> disp.shape
+    torch.Size([32, 32, 32, 3])
+
+    >>> # Batched displacement field
+    >>> disp = random_disp(shape=(4, 64, 64), non_spatial_dims=(0,))
+    >>> disp.shape
+    torch.Size([4, 64, 64, 2])
+    """
+    num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
+        non_spatial_dims=non_spatial_dims,
+        tensor_ndim=len(shape)
+    )
+
+    # For displacement fields, only batch dimension is supported (not channel)
+    if num_non_spatial > 1:
+        raise ValueError(
+            f'random_disp only supports batch dimension (non_spatial_dims=None or (0,)), '
+            f'got non_spatial_dims={non_spatial_dims}'
+        )
+
+    has_batch = num_non_spatial == 1
+    if has_batch:
+        batch_size = shape[0]
+        spatial_shape = shape[1:]
+    else:
+        batch_size = None
+        spatial_shape = shape
+
+    # Scale parameters by voxel size
+    if np.isscalar(scales):
+        scales = scales / voxsize
+    else:
+        scales = [s / voxsize for s in scales]
+    magnitude = magnitude / voxsize
+
+    # Generate independent fractal noise for each spatial dimension
+    disp_components = []
+    for _ in range(num_spatial):
+        noise = fractal_noise(
+            shape=shape,
+            scales=scales,
+            magnitude=magnitude,
+            non_spatial_dims=non_spatial_dims,
+            device=device,
+            method=method
+        )
+        disp_components.append(noise)
+
+    # Stack along last dimension to create displacement field
+    disp = torch.stack(disp_components, dim=-1)
+
+    if integrations > 0:
+        if not has_batch:
+            # Pure spatial: integrate directly
+            disp = integrate_disp(disp, integrations, meshgrid)
+        else:
+            # Batched: integrate each sample
+            integrated = []
+            for i in range(batch_size):
+                integrated.append(integrate_disp(disp[i], integrations, meshgrid))
+            disp = torch.stack(integrated, dim=0)
+
+    return disp
