@@ -184,7 +184,7 @@ def smooth_gaussian(
 
 def perlin(
     shape: Sequence[int],
-    smoothing: Union[float, List[float], None] = None,
+    scales: Union[float, int, List[float], None] = None,
     magnitude: float = 1.0,
     weights: Union[List[float], None] = None,
     device: Union[torch.device, None] = None,
@@ -199,20 +199,23 @@ def perlin(
         Desired shape of output tensor in (B, C, *spatial) format. Must have at least 3
         dimensions (batch, channel, and spatial). Examples: (1, 1, 64, 64) for 2D,
         (2, 3, 64, 64, 64) for 3D.
-    smoothing : float, List[float], or None, default=None
-        Spatial smoothing sigma(s) in voxel coordinates for each scale. If None, defaults
-        to powers of 2 up to max spatial dimension. If scalar, reduces to single-scale
-        smooth_gaussian(). If list, each value defines a smoothing scale.
+    scales : float, int, List[float], or None, default=None
+        Smoothing scale(s) for each octave. Interpretation depends on method:
+        - method='blur': sigma values for Gaussian smoothing
+        - method='upsample': downsampling factors for upsampled noise
+        If None, defaults to powers of 2 up to max spatial dimension.
+        If scalar, reduces to single-scale noise generation.
     magnitude : float, default=1.0
         Standard deviation of the final normalized noise.
     weights : List[float] or None, default=None
-        Weight for each smoothing scale. If None, uses linearly increasing weights
-        [1, 2, 3, ...]. Length must match smoothing if both are lists.
+        Weight for each scale. If None, uses linearly increasing weights
+        [1, 2, 3, ...]. Length must match scales if both are lists.
     device : torch.device or None, default=None
         Device for tensor allocation. If None, defaults to CPU.
     method : {'blur', 'upsample'}, default='blur'
-        Noise generation method. 'upsample' is faster and more memory efficient for
-        larger sigma values, but at the cost of quality.
+        Noise generation method:
+        - 'blur': Generate noise at full spatial res and apply Gaussian smoothing (higher quality)
+        - 'upsample': Generate coarse noise and upsample (faster, lower memory)
 
     Returns
     -------
@@ -226,47 +229,24 @@ def perlin(
     >>> noise_2d.shape
     torch.Size([1, 1, 64, 64])
 
-    >>> # Generate 3D Perlin noise with custom smoothing scales
-    >>> noise_3d = perlin(shape=(1, 1, 32, 32, 32), smoothing=[2.0, 4.0, 8.0], magnitude=2.0)
+    >>> # Generate 3D Perlin noise with custom scales
+    >>> noise_3d = perlin(shape=(1, 1, 32, 32, 32), scales=[2.0, 4.0, 8.0], magnitude=2.0)
 
     >>> # Single-scale Perlin (equivalent to smooth_gaussian)
-    >>> noise_single = perlin(shape=(1, 1, 64, 64), smoothing=5.0)
+    >>> noise_single = perlin(shape=(1, 1, 64, 64), scales=5.0)
+
+    >>> # Using upsample method for faster generation
+    >>> noise_fast = perlin(shape=(1, 1, 128, 128), method='upsample', scales=[4, 8, 16])
     """
-    spatial_shape = shape[2:]
-
-    # Default smoothing: powers of 2 up to max spatial dimension
-    if smoothing is None:
-        smoothing = 2 ** np.arange(np.log2(max(spatial_shape)))[1:]
-
-    # Single-scale case: delegate to smooth_gaussian
-    elif np.isscalar(smoothing):
-        return smooth_gaussian(
-            shape=shape, sigma=smoothing, magnitude=magnitude, device=device, method=method
-        )
-
-    # Multi-scale case: combine multiple smoothing levels
-    if len(smoothing) == 1:
-        weights = [None]
-    elif weights is None:
-        weights = np.arange(len(smoothing)) + 1
-
-    noise = None
-    for s, w in zip(smoothing, weights):
-        # Generate smooth field at this scale
-        sample = smooth_gaussian(shape=shape, sigma=s, device=device, method=method)
-        if w is not None:
-            sample *= w
-
-        # Merge with accumulated noise
-        if noise is None:
-            noise = sample
-        else:
-            noise += sample
-
-    # In-place normalize
-    noise -= noise.mean()
-    noise *= magnitude / noise.std()
-    return noise
+    return vxm.perlin(
+        shape=shape,
+        scales=scales,
+        magnitude=magnitude,
+        weights=weights,
+        non_spatial_dims=(0, 1),
+        device=device,
+        method=method,
+    )
 
 
 def random_disp(
