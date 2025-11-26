@@ -88,12 +88,12 @@ class MSE:
 
     def __init__(self, *args, **kwargs):
         raise DeprecationWarning(
-            "voxelmorph.nn.losses.Dice is deprecated. Use neurite.nn.modules.Dice instead."
+            "voxelmorph.nn.losses.MSE is deprecated. Use neurite.nn.modules.MSE instead."
         )
 
     def loss(self, y_true, y_pred):
         raise DeprecationWarning(
-            "voxelmorph.nn.losses.Dice is deprecated. Use neurite.nn.modules.Dice instead."
+            "voxelmorph.nn.losses.MSE is deprecated. Use neurite.nn.modules.MSE instead."
         )
 
 
