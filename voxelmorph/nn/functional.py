@@ -93,7 +93,6 @@ def smooth_gaussian(
     scale: float,
     magnitude: float = 1.0,
     device: Union[torch.device, None] = None,
-    method: Literal['blur', 'upsample'] = 'blur'
 ) -> torch.Tensor:
     """
     Generate smooth Gaussian noise in (B, C, *spatial) format.
@@ -109,9 +108,6 @@ def smooth_gaussian(
         Standard deviation of the noise after normalization.
     device : torch.device or None, default=None
         Device for tensor allocation. If None, defaults to CPU.
-    method : {'blur', 'upsample'}, default='blur'
-        Noise generation method. 'upsample' is faster and more memory efficient for larger scale
-        values, but at the cost of quality.
 
     Returns
     -------
@@ -129,24 +125,14 @@ def smooth_gaussian(
     >>> noise_3d = smooth_gaussian(shape=(2, 3, 32, 32, 32), scale=5.0, magnitude=2.0)
     >>> noise_3d.shape
     torch.Size([2, 3, 32, 32, 32])
-
-    >>> # Use upsample method for efficiency with large scale
-    >>> noise_fast = smooth_gaussian(shape=(1, 1, 128, 128), scale=10.0, method='upsample')
     """
-    if method == 'blur':
-        noise = torch.normal(0, 1, size=shape, device=device)
-        noise = nef.gaussian_smoothing(noise, sigma=scale, truncate=3)
-
-    elif method == 'upsample':
-        noise = vxm.upsample_noise(shape, scale=scale, non_spatial_dims=(0, 1), device=device)
-
-    else:
-        raise ValueError(f'unknown smooth gaussian method `{method}`')
-
-    # In-place normalize
-    noise -= noise.mean()
-    noise *= magnitude / noise.std()
-    return noise
+    return vxm.smooth_gaussian(
+        shape=shape,
+        sigma=scale,
+        magnitude=magnitude,
+        non_spatial_dims=(0, 1),
+        device=device,
+    )
 
 
 def perlin(
