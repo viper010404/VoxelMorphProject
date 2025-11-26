@@ -22,6 +22,7 @@ __all__ = [
     'compose',
     'is_affine_shape',
     'make_square_affine',
+    'upsample_noise',
 ]
 
 
@@ -995,3 +996,88 @@ def make_square_affine(mat: torch.Tensor) -> torch.Tensor:
     bottom_row[..., 0, -1] = 1.0
 
     return torch.cat([mat, bottom_row], dim=-2)
+
+
+def upsample_noise(
+    shape: Sequence[int],
+    scale: Union[float, int],
+    non_spatial_dims: Union[Sequence[int], None] = None,
+    device: Union[torch.device, None] = None
+) -> torch.Tensor:
+    """
+    Generate smooth noise by upsampling from a coarse grid.
+
+    Creates noise at a downsampled resolution (determined by scale) and upsamples
+    to the target shape using linear interpolation. This produces smooth, spatially
+    correlated noise more efficiently than blurring full-resolution noise.
+
+    Parameters
+    ----------
+    shape : Sequence[int]
+        Target shape of output tensor. Interpretation depends on non_spatial_dims:
+        - non_spatial_dims=None: (*spatial,) pure spatial tensor
+        - non_spatial_dims=(0,): (C, *spatial) with channel dimension
+        - non_spatial_dims=(0, 1): (B, C, *spatial) with batch and channel
+    scale : float or int
+        Downsampling factor. Larger values produce smoother noise. The coarse grid
+        size along each spatial dimension is max(spatial_size // scale, 2).
+    non_spatial_dims : Sequence of int or None, default=None
+        Indices of non-spatial dimensions:
+        - None: tensor is pure spatial (*spatial,)
+        - (0,): first dim is non-spatial (C, *spatial)
+        - (0, 1): first two dims are non-spatial (B, C, *spatial)
+    device : torch.device or None, default=None
+        Device for tensor allocation.
+
+    Returns
+    -------
+    torch.Tensor
+        Upsampled noise with the specified shape. Values are standard normal
+        at the coarse scale, then interpolated.
+
+    Examples
+    --------
+    >>> # Pure spatial 2D noise
+    >>> noise = upsample_noise(shape=(64, 64), scale=8.0)
+    >>> noise.shape
+    torch.Size([64, 64])
+
+    >>> # With channel dimension
+    >>> noise = upsample_noise(shape=(3, 64, 64), scale=8.0, non_spatial_dims=(0,))
+    >>> noise.shape
+    torch.Size([3, 64, 64])
+
+    >>> # With batch and channel dimensions
+    >>> noise = upsample_noise(shape=(2, 3, 64, 64), scale=8.0, non_spatial_dims=(0, 1))
+    >>> noise.shape
+    torch.Size([2, 3, 64, 64])
+    """
+    num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
+        non_spatial_dims=non_spatial_dims,
+        tensor_ndim=len(shape)
+    )
+
+    non_spatial_shape = shape[:num_non_spatial]
+    spatial_shape = shape[num_non_spatial:]
+
+    # Compute downsampled noise
+    coarse_spatial = tuple(max(int(s // scale), 2) for s in spatial_shape)
+    coarse_shape = (*non_spatial_shape, *coarse_spatial)
+    noise = torch.randn(coarse_shape, device=device)
+
+    # Upsample requires (B, C, *spatial) for nn interpolate. add dims if needed
+    dims_to_add = 2 - num_non_spatial
+    for _ in range(dims_to_add):
+        noise = noise.unsqueeze(0)
+
+    # Interpolate to target spatial shape
+    mode = ne.utils.infer_linear_interpolation_mode(num_spatial=num_spatial)
+    noise = torch.nn.functional.interpolate(
+        noise, size=spatial_shape, mode=mode, align_corners=False
+    )
+
+    # Remove added dimensions
+    for _ in range(dims_to_add):
+        noise = noise.squeeze(0)
+
+    return noise

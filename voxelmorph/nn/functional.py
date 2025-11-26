@@ -141,13 +141,9 @@ def smooth_gaussian(
         noise = nef.gaussian_smoothing(noise, sigma=sigma, truncate=3)
 
     elif method == 'upsample':
-        # Compute downsampled shape for spatial dimensions only
-        downshape = tuple([max(int(s // sigma), 2) for s in spatial_shape])
-        # Generate downsampled noise with (B, C, *downsampled_spatial)
-        noise = torch.normal(0, 1, size=(*shape[:2], *downshape), device=device)
-        # Upsample to target spatial shape
-        mode = {1: 'linear', 2: 'bilinear', 3: 'trilinear'}[ndim]
-        noise = torch.nn.functional.interpolate(noise, size=spatial_shape, mode=mode)
+        noise = vxm.upsample_noise(
+            shape=shape, scale=sigma, non_spatial_dims=(0, 1), device=device
+        )
 
     else:
         raise ValueError(f'unknown smooth gaussian method `{method}`')
