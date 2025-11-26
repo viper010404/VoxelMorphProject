@@ -4,14 +4,12 @@ written in PyTorch.
 """
 
 # Standard library imports
-from typing import List, Union, Optional, Sequence, Literal
+from typing import List, Union, Sequence, Literal
 
 # Third-party imports
 import torch
-import numpy as np
 
-import neurite as ne
-import neurite.nn.functional as nef
+# Local imports
 import voxelmorph as vxm
 
 __all__ = [
