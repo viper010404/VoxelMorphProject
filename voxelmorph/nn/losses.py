@@ -92,16 +92,15 @@ class MSE:
 
 class Dice:
     """
-    N-D dice for segmentation
+    Deprecated. Use neurite.nn.modules.Dice instead.
     """
 
-    def loss(self, y_true, y_pred):
-        ndims = len(list(y_pred.size())) - 2
-        vol_axes = list(range(2, ndims + 2))
-        top = 2 * (y_true * y_pred).sum(dim=vol_axes)
-        bottom = torch.clamp((y_true + y_pred).sum(dim=vol_axes), min=1e-5)
-        dice = torch.mean(top / bottom)
-        return -dice
+    def __init__(self, *args, **kwargs):
+        raise DeprecationWarning(
+            "voxelmorph.nn.losses.Dice is deprecated. "
+            "Use neurite.nn.modules.Dice instead."
+        )
+
 
 class Grad:
     """
