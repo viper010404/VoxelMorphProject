@@ -695,10 +695,10 @@ def integrate_disp(
 
 
 def compose(
-        transforms: Sequence[torch.Tensor],
-        interpolation_mode: str = 'bilinear',
-        origin_at_center: bool = True,
-        shape: Union[Sequence[int], None] = None
+    transforms: Sequence[torch.Tensor],
+    interpolation_mode: str = 'bilinear',
+    origin_at_center: bool = True,
+    shape: Union[Sequence[int], None] = None
 ) -> torch.Tensor:
     """
     Compose a single transform from a series of transforms.
