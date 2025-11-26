@@ -24,6 +24,7 @@ __all__ = [
     'make_square_affine',
     'upsample_noise',
     'smooth_gaussian',
+    'perlin',
 ]
 
 
@@ -1094,7 +1095,7 @@ def smooth_gaussian(
         (batch, channel, and spatial). Examples: (1, 1, 64, 64) for 2D, (2, 3, 64, 64, 64) for 3D.
     sigma : float
         Spatial smoothing sigma in voxel coordinates.
-    sigma : float, int, or Sequence[float or int], default=1  
+    sigma : float, int, or Sequence[float or int], default=1
         Standard deviation of the Gaussian kernel to smooth noise. If float/int, same sigma is used
     magnitude : float, default=1.0
         Standard deviation of the noise after normalization.
@@ -1142,3 +1143,130 @@ def smooth_gaussian(
     noise *= magnitude / noise.std()
 
     return ne.unpad_batch_channel(noise, dims_added)
+
+
+def perlin(
+    shape: Sequence[int],
+    scales: Union[float, int, Sequence[float | int], None] = None,
+    magnitude: float = 1.0,
+    weights: Union[Sequence[float], None] = None,
+    non_spatial_dims: Union[Sequence[int], None] = None,
+    device: Union[torch.device, None] = None,
+    method: Literal['blur', 'upsample'] = 'blur'
+) -> torch.Tensor:
+    """
+    Generate Perlin noise by combining multiple scales of smooth noise.
+
+    Creates multi-scale noise by generating smooth noise at different scales and combining
+    them with optional weighting. This produces natural-looking noise with features at
+    multiple spatial frequencies.
+
+    Parameters
+    ----------
+    shape : Sequence[int]
+        Target shape of output tensor. Interpretation depends on non_spatial_dims:
+        - non_spatial_dims=None: (*spatial,) pure spatial tensor
+        - non_spatial_dims=(0,): (C, *spatial) with channel dimension
+        - non_spatial_dims=(0, 1): (B, C, *spatial) with batch and channel
+    scales : float, int, Sequence[float or int], or None, default=None
+        Smoothing scale(s) for each octave. Interpretation depends on method:
+        - method='blur': sigma values for Gaussian smoothing
+        - method='upsample': downsampling factors for upsampled noise
+        If None, defaults to powers of 2 up to max spatial dimension.
+        If scalar, reduces to single-scale noise generation.
+    magnitude : float, default=1.0
+        Standard deviation of the final normalized noise.
+    weights : Sequence[float] or None, default=None
+        Weight for each scale. If None, uses linearly increasing weights [1, 2, 3, ...].
+        Length must match scales if both are sequences.
+    non_spatial_dims : Sequence of int or None, default=None
+        Indices of non-spatial dimensions:
+        - None: tensor is pure spatial (*spatial,)
+        - (0,): first dim is non-spatial (C, *spatial)
+        - (0, 1): first two dims are non-spatial (B, C, *spatial)
+    device : torch.device or None, default=None
+        Device for tensor allocation.
+    method : {'blur', 'upsample'}, default='blur'
+        Noise generation method:
+        - 'blur': Generate noise at full spatial res and apply Gaussian smoothing (higher quality)
+        - 'upsample': Generate coarse noise and upsample (faster, lower memory)
+
+    Returns
+    -------
+    torch.Tensor
+        Perlin noise with the specified shape.
+
+    Examples
+    --------
+    >>> # Pure spatial 2D Perlin noise with default scales
+    >>> noise = perlin(shape=(64, 64))
+    >>> noise.shape
+    torch.Size([64, 64])
+
+    >>> # With batch and channel dimensions
+    >>> noise = perlin(shape=(2, 3, 64, 64), non_spatial_dims=(0, 1))
+    >>> noise.shape
+    torch.Size([2, 3, 64, 64])
+
+    >>> # Custom scales and weights
+    >>> noise = perlin(shape=(64, 64), scales=[2.0, 4.0, 8.0], weights=[1.0, 0.5, 0.25])
+
+    >>> # Using upsample method for faster generation
+    >>> noise = perlin(shape=(128, 128, 128), method='upsample', scales=[4, 8, 16])
+    """
+    num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
+        non_spatial_dims=non_spatial_dims,
+        tensor_ndim=len(shape)
+    )
+    spatial_shape = shape[num_non_spatial:]
+
+    # Default scales: powers of 2 up to max spatial dimension
+    if scales is None:
+        scales = 2 ** np.arange(np.log2(max(spatial_shape)))[1:]
+
+    # Convert scalar to list for uniform handling
+    if np.isscalar(scales):
+        scales = [scales]
+
+    # Set default weights if not provided
+    if len(scales) == 1:
+        weights = [1.0]
+    elif weights is None:
+        weights = list(np.arange(len(scales)) + 1)
+
+    if len(weights) != len(scales):
+        raise ValueError(
+            f'weights length ({len(weights)}) must match scales length ({len(scales)})'
+        )
+
+    # Generate noise at each scale
+    noise = None
+    for scale, weight in zip(scales, weights):
+        if method == 'blur':
+            sample = smooth_gaussian(
+                shape=shape,
+                sigma=scale,
+                magnitude=1.0,
+                non_spatial_dims=non_spatial_dims,
+                device=device
+            )
+        else:  # method == 'upsample'
+            sample = upsample_noise(
+                shape=shape,
+                scale=scale,
+                non_spatial_dims=non_spatial_dims,
+                device=device
+            )
+
+        sample *= weight
+
+        if noise is None:
+            noise = sample
+        else:
+            noise += sample
+
+    # Normalize to target magnitude
+    noise -= noise.mean()
+    noise *= magnitude / noise.std()
+
+    return noise
