@@ -24,7 +24,7 @@ __all__ = [
     'make_square_affine',
     'upsample_noise',
     'smooth_gaussian',
-    'perlin',
+    'fractal_noise',
 ]
 
 
@@ -1145,7 +1145,7 @@ def smooth_gaussian(
     return ne.unpad_batch_channel(noise, dims_added)
 
 
-def perlin(
+def fractal_noise(
     shape: Sequence[int],
     scales: Union[float, int, Sequence[float | int], None] = None,
     magnitude: float = 1.0,
@@ -1155,7 +1155,7 @@ def perlin(
     method: Literal['blur', 'upsample'] = 'blur'
 ) -> torch.Tensor:
     """
-    Generate Perlin noise by combining multiple scales of smooth noise.
+    Generate fractal noise by combining multiple scales of smooth noise.
 
     Creates multi-scale noise by generating smooth noise at different scales and combining
     them with optional weighting. This produces natural-looking noise with features at
@@ -1194,25 +1194,25 @@ def perlin(
     Returns
     -------
     torch.Tensor
-        Perlin noise with the specified shape.
+        Fractal noise with the specified shape.
 
     Examples
     --------
-    >>> # Pure spatial 2D Perlin noise with default scales
-    >>> noise = perlin(shape=(64, 64))
+    >>> # Pure spatial 2D Fractal noise with default scales
+    >>> noise = fractal_noise(shape=(64, 64))
     >>> noise.shape
     torch.Size([64, 64])
 
     >>> # With batch and channel dimensions
-    >>> noise = perlin(shape=(2, 3, 64, 64), non_spatial_dims=(0, 1))
+    >>> noise = fractal_noise(shape=(2, 3, 64, 64), non_spatial_dims=(0, 1))
     >>> noise.shape
     torch.Size([2, 3, 64, 64])
 
     >>> # Custom scales and weights
-    >>> noise = perlin(shape=(64, 64), scales=[2.0, 4.0, 8.0], weights=[1.0, 0.5, 0.25])
+    >>> noise = fractal_noise(shape=(64, 64), scales=[2.0, 4.0, 8.0], weights=[1.0, 0.5, 0.25])
 
     >>> # Using upsample method for faster generation
-    >>> noise = perlin(shape=(128, 128, 128), method='upsample', scales=[4, 8, 16])
+    >>> noise = fractal_noise(shape=(128, 128, 128), method='upsample', scales=[4, 8, 16])
     """
     num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
         non_spatial_dims=non_spatial_dims,

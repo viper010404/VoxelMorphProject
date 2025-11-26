@@ -18,7 +18,7 @@ __all__ = [
     "spatial_transform",
     "upsample_noise",
     "smooth_gaussian",
-    "perlin",
+    "fractal_noise",
     "random_disp",
     "random_transform",
 ]
@@ -182,7 +182,7 @@ def smooth_gaussian(
     )
 
 
-def perlin(
+def fractal_noise(
     shape: Sequence[int],
     scales: Union[float, int, List[float], None] = None,
     magnitude: float = 1.0,
@@ -191,7 +191,7 @@ def perlin(
     method: Literal['blur', 'upsample'] = 'blur'
 ) -> torch.Tensor:
     """
-    Generate Perlin noise in (B, C, *spatial) format.
+    Generate Fractal noise in (B, C, *spatial) format.
 
     Parameters
     ----------
@@ -220,25 +220,25 @@ def perlin(
     Returns
     -------
     torch.Tensor
-        Perlin noise with shape (B, C, *spatial).
+        Fractal noise with shape (B, C, *spatial).
 
     Examples
     --------
-    >>> # Generate 2D Perlin noise with default scales
-    >>> noise_2d = perlin(shape=(1, 1, 64, 64))
+    >>> # Generate 2D Fractal noise with default scales
+    >>> noise_2d = fractal_noise(shape=(1, 1, 64, 64))
     >>> noise_2d.shape
     torch.Size([1, 1, 64, 64])
 
-    >>> # Generate 3D Perlin noise with custom scales
-    >>> noise_3d = perlin(shape=(1, 1, 32, 32, 32), scales=[2.0, 4.0, 8.0], magnitude=2.0)
+    >>> # Generate 3D Fractal noise with custom scales
+    >>> noise_3d = fractal_noise(shape=(1, 1, 32, 32, 32), scales=[2.0, 4.0, 8.0], magnitude=2.0)
 
-    >>> # Single-scale Perlin (equivalent to smooth_gaussian)
-    >>> noise_single = perlin(shape=(1, 1, 64, 64), scales=5.0)
+    >>> # Single-scale Fractal (equivalent to smooth_gaussian)
+    >>> noise_single = fractal_noise(shape=(1, 1, 64, 64), scales=5.0)
 
     >>> # Using upsample method for faster generation
-    >>> noise_fast = perlin(shape=(1, 1, 128, 128), method='upsample', scales=[4, 8, 16])
+    >>> noise_fast = fractal_noise(shape=(1, 1, 128, 128), method='upsample', scales=[4, 8, 16])
     """
-    return vxm.perlin(
+    return vxm.fractal_noise(
         shape=shape,
         scales=scales,
         magnitude=magnitude,
@@ -257,12 +257,12 @@ def random_disp(
     voxsize: float = 1,
     meshgrid: torch.Tensor = None,
     device: torch.device = None,
-    perlin_method: str = 'upsample'
+    fractal_method: str = 'upsample'
 ) -> torch.Tensor:
     """
-    Generate random displacement field using Perlin noise.
+    Generate random displacement field using Fractal noise.
 
-    Creates a displacement field by generating independent Perlin noise for each spatial
+    Creates a displacement field by generating independent Fractal noise for each spatial
     dimension and stacking them. The resulting field has shape (*spatial, ndim).
 
     Parameters
@@ -281,7 +281,7 @@ def random_disp(
         Coordinate grid for integration. If None and integrations > 0, computed internally.
     device : torch.device or None, default=None
         Device for tensor allocation. If None, defaults to CPU.
-    perlin_method : str, default='upsample'
+    fractal_method : str, default='upsample'
         Noise generation method ('blur' or 'upsample').
 
     Returns
@@ -305,14 +305,14 @@ def random_disp(
     smoothing = smoothing / voxsize
     magnitude = magnitude / voxsize
 
-    # Generate independent Perlin noise for each spatial dimension
+    # Generate independent Fractal noise for each spatial dimension
     ndim = len(shape)
     disp = [
-        perlin(
+        fractal_noise(
             shape=(1, 1, *shape),  # Add batch and channel dimensions
             smoothing=smoothing,
             magnitude=magnitude,
-            method=perlin_method,
+            method=fractal_method,
             device=device
         ).squeeze(0).squeeze(0)  # Remove batch and channel dimensions
         for i in range(ndim)
@@ -338,7 +338,7 @@ def random_transform(
     voxsize: int = 1,
     device: torch.device = None,
     isdisp: bool = True,
-    perlin_method: str = 'upsample',
+    fractal_method: str = 'upsample',
     sampling: bool = True,
 ) -> torch.Tensor:
     """
@@ -389,7 +389,7 @@ def random_transform(
             integrations=warp_integrations,
             voxsize=voxsize,
             device=device,
-            perlin_method=perlin_method)
+            fractal_method=fractal_method)
 
         # merge with the affine transform if necessary
         if trf is None:
