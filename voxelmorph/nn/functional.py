@@ -16,6 +16,7 @@ import voxelmorph as vxm
 
 __all__ = [
     "spatial_transform",
+    "upsample_noise",
     "smooth_gaussian",
     "perlin",
     "random_disp",
@@ -85,6 +86,52 @@ def spatial_transform(
         origin_at_center=origin_at_center,
         non_spatial_dims=(0, 1),
         align_corners=True
+    )
+
+
+def upsample_noise(
+    shape: Sequence[int],
+    scale: Union[float, int],
+    device: Union[torch.device, None] = None,
+) -> torch.Tensor:
+    """
+    Generate smooth noise by upsampling from a coarse grid in (B, C, *spatial) format.
+
+    Wrapper around voxelmorph.upsample_noise with non_spatial_dims=(0, 1).
+
+    Parameters
+    ----------
+    shape : Sequence[int]
+        Desired shape of output tensor in (B, C, *spatial). Must have at least 3 dimensions
+        (batch, channel, and spatial). Examples: (1, 1, 64, 64) for 2D, (2, 3, 64, 64, 64) for 3D.
+    scale : float or int
+        Downsampling factor. Larger values produce smoother noise. The coarse grid size along each
+        spatial dimension is max(spatial_size // scale, 2).
+    device : torch.device or None, default=None
+        Device for tensor allocation. If None, defaults to CPU.
+
+    Returns
+    -------
+    torch.Tensor
+        Upsampled noise with shape (B, C, *spatial).
+
+    Examples
+    --------
+    >>> # Generate 2D noise field
+    >>> noise_2d = upsample_noise(shape=(1, 1, 64, 64), scale=8.0)
+    >>> noise_2d.shape
+    torch.Size([1, 1, 64, 64])
+
+    >>> # Generate 3D noise field with multiple channels
+    >>> noise_3d = upsample_noise(shape=(2, 3, 32, 32, 32), scale=4.0)
+    >>> noise_3d.shape
+    torch.Size([2, 3, 32, 32, 32])
+    """
+    return vxm.upsample_noise(
+        shape=shape,
+        scale=scale,
+        non_spatial_dims=(0, 1),
+        device=device,
     )
 
 
