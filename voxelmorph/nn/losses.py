@@ -83,11 +83,18 @@ class NCC:
 
 class MSE:
     """
-    Mean squared error loss.
+    Deprecated. Use neurite.nn.modules.MSE instead.
     """
 
+    def __init__(self, *args, **kwargs):
+        raise DeprecationWarning(
+            "voxelmorph.nn.losses.Dice is deprecated. Use neurite.nn.modules.Dice instead."
+        )
+
     def loss(self, y_true, y_pred):
-        return torch.mean((y_true - y_pred) ** 2)
+        raise DeprecationWarning(
+            "voxelmorph.nn.losses.Dice is deprecated. Use neurite.nn.modules.Dice instead."
+        )
 
 
 class Dice:
@@ -97,8 +104,7 @@ class Dice:
 
     def __init__(self, *args, **kwargs):
         raise DeprecationWarning(
-            "voxelmorph.nn.losses.Dice is deprecated. "
-            "Use neurite.nn.modules.Dice instead."
+            "voxelmorph.nn.losses.Dice is deprecated. Use neurite.nn.modules.Dice instead."
         )
 
 
