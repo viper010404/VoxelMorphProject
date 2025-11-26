@@ -90,7 +90,7 @@ def spatial_transform(
 
 def smooth_gaussian(
     shape: Sequence[int],
-    sigma: float,
+    scale: float,
     magnitude: float = 1.0,
     device: Union[torch.device, None] = None,
     method: Literal['blur', 'upsample'] = 'blur'
@@ -103,14 +103,14 @@ def smooth_gaussian(
     shape : Sequence[int]
         Desired shape of output tensor in (B, C, *spatial). Must have at least 3 dimensions
         (batch, channel, and spatial). Examples: (1, 1, 64, 64) for 2D, (2, 3, 64, 64, 64) for 3D.
-    sigma : float
-        Spatial smoothing sigma in voxel coordinates.
+    scale : float
+        Spatial smoothing scale in voxel coordinates.
     magnitude : float, default=1.0
         Standard deviation of the noise after normalization.
     device : torch.device or None, default=None
         Device for tensor allocation. If None, defaults to CPU.
     method : {'blur', 'upsample'}, default='blur'
-        Noise generation method. 'upsample' is faster and more memory efficient for larger sigma
+        Noise generation method. 'upsample' is faster and more memory efficient for larger scale
         values, but at the cost of quality.
 
     Returns
@@ -121,29 +121,24 @@ def smooth_gaussian(
     Examples
     --------
     >>> # Generate 2D noise field
-    >>> noise_2d = smooth_gaussian(shape=(1, 1, 64, 64), sigma=3.0)
+    >>> noise_2d = smooth_gaussian(shape=(1, 1, 64, 64), scale=3.0)
     >>> noise_2d.shape
     torch.Size([1, 1, 64, 64])
 
     >>> # Generate 3D noise field with multiple channels
-    >>> noise_3d = smooth_gaussian(shape=(2, 3, 32, 32, 32), sigma=5.0, magnitude=2.0)
+    >>> noise_3d = smooth_gaussian(shape=(2, 3, 32, 32, 32), scale=5.0, magnitude=2.0)
     >>> noise_3d.shape
     torch.Size([2, 3, 32, 32, 32])
 
-    >>> # Use upsample method for efficiency with large sigma
-    >>> noise_fast = smooth_gaussian(shape=(1, 1, 128, 128), sigma=10.0, method='upsample')
+    >>> # Use upsample method for efficiency with large scale
+    >>> noise_fast = smooth_gaussian(shape=(1, 1, 128, 128), scale=10.0, method='upsample')
     """
-    spatial_shape = shape[2:]
-    ndim = len(spatial_shape)
-
     if method == 'blur':
         noise = torch.normal(0, 1, size=shape, device=device)
-        noise = nef.gaussian_smoothing(noise, sigma=sigma, truncate=3)
+        noise = nef.gaussian_smoothing(noise, sigma=scale, truncate=3)
 
     elif method == 'upsample':
-        noise = vxm.upsample_noise(
-            shape=shape, scale=sigma, non_spatial_dims=(0, 1), device=device
-        )
+        noise = vxm.upsample_noise(shape, scale=scale, non_spatial_dims=(0, 1), device=device)
 
     else:
         raise ValueError(f'unknown smooth gaussian method `{method}`')
