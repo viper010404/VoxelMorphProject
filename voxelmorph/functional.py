@@ -26,6 +26,7 @@ __all__ = [
     'smooth_gaussian',
     'fractal_noise',
     'random_disp',
+    'random_transform',
 ]
 
 
@@ -1399,3 +1400,171 @@ def random_disp(
             disp = torch.stack(integrated, dim=0)
 
     return disp
+
+
+def random_transform(
+    shape: Sequence[int],
+    affine_probability: float = 1.0,
+    max_translation: float = 5.0,
+    max_rotation: float = 5.0,
+    max_scaling: float = 1.1,
+    warp_probability: float = 1.0,
+    warp_integrations: int = 5,
+    warp_scales_range: Sequence[float] = (10, 20),
+    warp_magnitude_range: Sequence[float] = (1, 2),
+    voxsize: Union[float, int] = 1,
+    non_spatial_dims: Union[Sequence[int], None] = None,
+    device: Union[torch.device, None] = None,
+    method: Literal['blur', 'upsample'] = 'upsample',
+    sampling: bool = True,
+) -> torch.Tensor:
+    """
+    Generate a random spatial transformation combining affine and nonlinear warps.
+
+    Creates a displacement field by optionally combining:
+    1. Random affine transformation (translation, rotation, scaling)
+    2. Random nonlinear warp using fractal noise
+
+    Parameters
+    ----------
+    shape : Sequence[int]
+        Shape of the transformation field. Interpretation depends on non_spatial_dims:
+        - non_spatial_dims=None: (*spatial,) pure spatial, output is (*spatial, ndim)
+        - non_spatial_dims=(0,): (B, *spatial), output is (B, *spatial, ndim)
+    affine_probability : float, default=1.0
+        Probability of applying an affine transformation.
+    max_translation : float, default=5.0
+        Maximum translation in voxel coordinates (before dividing by voxsize).
+    max_rotation : float, default=5.0
+        Maximum rotation in degrees.
+    max_scaling : float, default=1.1
+        Maximum scaling factor (min is 1/max_scaling).
+    warp_probability : float, default=1.0
+        Probability of applying a nonlinear warp.
+    warp_integrations : int, default=5
+        Number of integration steps for diffeomorphic warp.
+    warp_scales_range : Sequence[float], default=(10, 20)
+        Range (min, max) to sample smoothing scales for fractal noise.
+    warp_magnitude_range : Sequence[float], default=(1, 2)
+        Range (min, max) to sample displacement magnitude.
+    voxsize : float or int, default=1
+        Voxel size for scaling translation, smoothing, and magnitude parameters.
+    non_spatial_dims : Sequence of int or None, default=None
+        Indices of non-spatial dimensions (only batch dimension supported):
+        - None: tensor is pure spatial (*spatial,)
+        - (0,): first dim is batch (B, *spatial)
+    device : torch.device or None, default=None
+        Device for tensor allocation.
+    method : {'blur', 'upsample'}, default='upsample'
+        Noise generation method for nonlinear warp.
+    sampling : bool, default=True
+        If True, sample random parameters. If False, use maximum values directly.
+
+    Returns
+    -------
+    torch.Tensor
+        Displacement field:
+        - (*spatial, ndim) if non_spatial_dims=None
+        - (B, *spatial, ndim) if non_spatial_dims=(0,)
+        Returns None if both affine and warp probabilities result in no transform.
+
+    Examples
+    --------
+    >>> # Pure spatial 2D transform
+    >>> trf = random_transform(shape=(64, 64))
+    >>> trf.shape
+    torch.Size([64, 64, 2])
+
+    >>> # 3D transform with custom parameters
+    >>> trf = random_transform(
+    ...     shape=(32, 32, 32),
+    ...     max_rotation=10.0,
+    ...     warp_magnitude_range=(2, 5)
+    ... )
+    >>> trf.shape
+    torch.Size([32, 32, 32, 3])
+
+    >>> # Batched transform
+    >>> trf = random_transform(shape=(4, 64, 64), non_spatial_dims=(0,))
+    >>> trf.shape
+    torch.Size([4, 64, 64, 2])
+    """
+    num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
+        non_spatial_dims=non_spatial_dims,
+        tensor_ndim=len(shape)
+    )
+
+    # For displacement fields, only batch dimension is supported
+    if num_non_spatial > 1:
+        raise ValueError(
+            f'random_transform only supports batch dimension (non_spatial_dims=None or (0,)), '
+            f'got non_spatial_dims={non_spatial_dims}'
+        )
+
+    has_batch = num_non_spatial == 1
+    if has_batch:
+        batch_size = shape[0]
+        spatial_shape = shape[1:]
+    else:
+        batch_size = 1  # Treat as batch of 1 for uniform processing
+        spatial_shape = shape
+
+    # Generate transforms for each sample in batch
+    transforms = []
+    for _ in range(batch_size):
+        trf = None
+
+        # Generate random affine
+        if ne.utils.bernoulli(p=affine_probability, shape=(1,)).item():
+            meshgrid = ne.volshape_to_ndgrid(size=spatial_shape, device=device, stack=True)
+
+            # Convert max_translation from mm to voxel
+            max_translation_vox = max_translation / voxsize
+            matrix = random_affine(
+                ndim=num_spatial,
+                max_translation=max_translation_vox,
+                max_rotation=max_rotation,
+                max_scaling=max_scaling,
+                device=device,
+                sampling=sampling
+            )
+            trf = affine_to_disp(matrix, meshgrid)
+
+        # Generate nonlinear warp
+        if ne.utils.bernoulli(p=warp_probability, shape=(1,)).item():
+            warp_scales = np.random.uniform(*warp_scales_range)
+            warp_magnitude = np.random.uniform(*warp_magnitude_range)
+
+            disp = random_disp(
+                shape=spatial_shape,
+                scales=warp_scales,
+                magnitude=warp_magnitude,
+                integrations=warp_integrations,
+                voxsize=voxsize,
+                device=device,
+                method=method
+            )
+
+            # Compose with affine if present
+            if trf is None:
+                trf = disp
+            else:
+                # Warp the displacement field by the affine transform and add
+                trf = trf + spatial_transform(
+                    disp.movedim(-1, 0),
+                    trf,
+                    meshgrid=meshgrid,
+                    non_spatial_dims=(0,)
+                ).movedim(0, -1)
+
+        # If no transform was generated, create identity (zero displacement)
+        if trf is None:
+            trf = torch.zeros(*spatial_shape, num_spatial, device=device)
+
+        transforms.append(trf)
+
+    # Stack if batched, otherwise return single transform
+    if has_batch:
+        return torch.stack(transforms, dim=0)
+    else:
+        return transforms[0]
