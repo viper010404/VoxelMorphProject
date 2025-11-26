@@ -326,82 +326,90 @@ def random_disp(
 
 
 def random_transform(
-    shape: List[int],
+    shape: Sequence[int],
     affine_probability: float = 1.0,
     max_translation: float = 5.0,
     max_rotation: float = 5.0,
     max_scaling: float = 1.1,
     warp_probability: float = 1.0,
     warp_integrations: int = 5,
-    warp_smoothing_range: List[int] = [10, 20],
-    warp_magnitude_range: List[int] = [1, 2],
-    voxsize: int = 1,
-    device: torch.device = None,
-    isdisp: bool = True,
-    fractal_method: str = 'upsample',
+    warp_scales_range: Sequence[float] = (10, 20),
+    warp_magnitude_range: Sequence[float] = (1, 2),
+    voxsize: Union[float, int] = 1,
+    device: Union[torch.device, None] = None,
+    method: Literal['blur', 'upsample'] = 'upsample',
     sampling: bool = True,
 ) -> torch.Tensor:
     """
-    generate a randomly sampled transform
+    Generate random spatial transformation for images in (B, C, *spatial) format.
 
-    Parameters:
-    -----------
-    disp: torch.Tensor
-        Displacement crs field
-    meshgrid: torch.Tensor, optional
-       crs grid for the image shape
+    Takes shape in (B, C, *spatial) format (matching image tensors) but outputs
+    displacement field in (B, *spatial, ndim) format for use with grid_sample.
 
-    Returns:
+    Parameters
+    ----------
+    shape : Sequence[int]
+        Shape in (B, C, *spatial) format matching the image to be transformed.
+        Examples: (1, 1, 64, 64) for 2D, (2, 3, 64, 64, 64) for 3D.
+    affine_probability : float, default=1.0
+        Probability of applying an affine transformation.
+    max_translation : float, default=5.0
+        Maximum translation in voxel coordinates (before dividing by voxsize).
+    max_rotation : float, default=5.0
+        Maximum rotation in degrees.
+    max_scaling : float, default=1.1
+        Maximum scaling factor (min is 1/max_scaling).
+    warp_probability : float, default=1.0
+        Probability of applying a nonlinear warp.
+    warp_integrations : int, default=5
+        Number of integration steps for diffeomorphic warp.
+    warp_scales_range : Sequence[float], default=(10, 20)
+        Range (min, max) to sample smoothing scales for fractal noise.
+    warp_magnitude_range : Sequence[float], default=(1, 2)
+        Range (min, max) to sample displacement magnitude.
+    voxsize : float or int, default=1
+        Voxel size for scaling translation, smoothing, and magnitude parameters.
+    device : torch.device or None, default=None
+        Device for tensor allocation.
+    method : {'blur', 'upsample'}, default='upsample'
+        Noise generation method for nonlinear warp.
+    sampling : bool, default=True
+        If True, sample random parameters. If False, use maximum values directly.
+
+    Returns
+    -------
+    torch.Tensor
+        Displacement field with shape (B, *spatial, ndim).
+
+    Examples
     --------
-    torch.Tensor:
-       displacement crs field, or
-       absolute crs field scaled to range [-1, 1] if isdisp is False
+    >>> # Generate transform for 2D image with shape (B, C, H, W)
+    >>> trf = random_transform(shape=(1, 1, 64, 64))
+    >>> trf.shape
+    torch.Size([1, 64, 64, 2])
+
+    >>> # Generate transform for 3D image with shape (B, C, D, H, W)
+    >>> trf = random_transform(shape=(2, 3, 32, 32, 32), max_rotation=10.0)
+    >>> trf.shape
+    torch.Size([2, 32, 32, 32, 3])
     """
-    ndim = len(shape)
-    trf = None
+    # Extract batch and spatial shape, ignoring channel dimension
+    batch_size = shape[0]
+    spatial_shape = shape[2:]  # Skip B and C
 
-    # generate a random affine
-    if ne.utils.bernoulli(p=affine_probability, shape=(1,)).item():
-
-        # compute meshgrid, it is the target crs
-        meshgrid = ne.volshape_to_ndgrid(size=shape, device=device, stack=True)
-
-        # convert max_translation from mm to voxel
-        # the matrix returned from vxm.random_affine() is vox2vox rotating around the image center.
-        # it is used as target to source transformation in affine_to_disp() to covert
-        # the vox2vox matrix to dispacement field.
-        max_translation = max_translation / voxsize
-        matrix = vxm.random_affine(
-            ndim=ndim,
-            max_translation=max_translation,
-            max_rotation=max_rotation,
-            max_scaling=max_scaling,
-            device=device,
-            sampling=sampling)
-        trf = vxm.functional.affine_to_disp(matrix, meshgrid)
-
-    # generate a nonlinear transform
-    if ne.utils.bernoulli(p=warp_probability, shape=(1,)).item():
-        disp = random_disp(
-            shape=shape,
-            smoothing=np.random.uniform(*warp_smoothing_range),
-            magnitude=np.random.uniform(*warp_magnitude_range),
-            integrations=warp_integrations,
-            voxsize=voxsize,
-            device=device,
-            fractal_method=fractal_method)
-
-        # merge with the affine transform if necessary
-        if trf is None:
-            trf = disp
-        else:
-            trf += vxm.functional.spatial_transform(
-                disp.movedim(-1, 0), trf, meshgrid=meshgrid, non_spatial_dims=(0,)
-            ).movedim(0, -1)
-
-    # convert to coordinates if specified
-    if trf is not None and not isdisp:
-        # compute the absolute crs field scaled to range [-1, 1]
-        trf = vxm.functional.disp_to_coords(trf)
-
-    return trf
+    return vxm.random_transform(
+        shape=(batch_size, *spatial_shape),
+        affine_probability=affine_probability,
+        max_translation=max_translation,
+        max_rotation=max_rotation,
+        max_scaling=max_scaling,
+        warp_probability=warp_probability,
+        warp_integrations=warp_integrations,
+        warp_scales_range=warp_scales_range,
+        warp_magnitude_range=warp_magnitude_range,
+        voxsize=voxsize,
+        non_spatial_dims=(0,),
+        device=device,
+        method=method,
+        sampling=sampling,
+    )
