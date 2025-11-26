@@ -107,6 +107,11 @@ class Dice:
             "voxelmorph.nn.losses.Dice is deprecated. Use neurite.nn.modules.Dice instead."
         )
 
+    def loss(self, y_true, y_pred):
+        raise DeprecationWarning(
+            "voxelmorph.nn.losses.Dice is deprecated. Use neurite.nn.modules.Dice instead."
+        )
+
 
 class Grad:
     """
