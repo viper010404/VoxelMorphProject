@@ -963,6 +963,40 @@ def test_compose_displacement_with_translation_affine():
     assert torch.allclose(interior, expected_interior, atol=1e-5)
 
 
+def test_compose_batched_displacements():
+    """
+    Composing batched displacement fields (B, ndim, *spatial) should work correctly.
+
+    This tests the automatic batch dimension detection in compose().
+    """
+    batch_size = 4
+    shape = (16, 16)
+    ndim = len(shape)
+
+    # Batched constant displacement: shift by (1, 0) everywhere
+    disp1 = torch.zeros(batch_size, ndim, *shape)
+    disp1[:, 0, ...] = 1.0  # x-displacement
+
+    # Batched constant displacement: shift by (0, 1) everywhere
+    disp2 = torch.zeros(batch_size, ndim, *shape)
+    disp2[:, 1, ...] = 1.0  # y-displacement
+
+    composed = vxm.compose([disp1, disp2])
+
+    # Output should be batched with same shape
+    assert composed.shape == (batch_size, ndim, *shape)
+
+    # Expected: (1, 1) everywhere in the interior (constant displacements add)
+    expected = torch.zeros(batch_size, ndim, *shape)
+    expected[:, 0, ...] = 1.0
+    expected[:, 1, ...] = 1.0
+
+    # Check interior region (exclude boundary pixels affected by padding)
+    interior = composed[:, :, 2:-2, 2:-2]
+    expected_interior = expected[:, :, 2:-2, 2:-2]
+    assert torch.allclose(interior, expected_interior, atol=1e-5)
+
+
 def test_compose_scale_affine_with_zero_displacement():
     """
     Composing [scale_affine, zero_disp] should produce the affine's displacement field.

@@ -649,7 +649,7 @@ def compose(
     transforms: Sequence[torch.Tensor],
     interpolation_mode: str = 'bilinear',
     origin_at_center: bool = True,
-    shape: Union[Sequence[int], None] = None
+    shape: Union[Sequence[int], None] = None,
 ) -> torch.Tensor:
     """
     Compose a single transform from a series of transforms.
@@ -663,7 +663,7 @@ def compose(
     transforms : Sequence[Tensor]
         List or tuple of affine matrices and/or displacement fields to compose.
         - Affine matrices: shape (..., N, N+1) or (..., N+1, N+1)
-        - Displacement fields: shape (N, *spatial_shape) - channels-first format
+        - Displacement fields: shape (ndim, *spatial) or (B, ndim, *spatial)
     interpolation_mode : str, default='bilinear'
         Interpolation method for composing displacement fields.
         Options: 'bilinear', 'nearest', 'trilinear'.
@@ -693,23 +693,28 @@ def compose(
     >>> composed = vxm.compose([translate, scale])
     >>> # Result is affine: scale applied first, then translate
 
-    >>> # Compose affine with displacement field (ndim, H, W)
+    >>> # Compose affine with unbatched displacement field (ndim, H, W)
     >>> disp = torch.randn(2, 64, 64)
     >>> affine = torch.tensor([[1., 0., 5.],
     ...                        [0., 1., 3.]])
     >>> composed = vxm.compose([affine, disp])
-    >>> # Result is displacement field: disp applied first, then affine
+    >>> composed.shape
+    torch.Size([2, 64, 64])
 
-    >>> # Compose multiple displacement fields
-    >>> disp1 = torch.randn(2, 64, 64)
-    >>> disp2 = torch.randn(2, 64, 64)
+    >>> # Compose batched displacement fields (B, ndim, H, W)
+    >>> disp1 = torch.randn(4, 2, 64, 64)
+    >>> disp2 = torch.randn(4, 2, 64, 64)
     >>> composed = vxm.compose([disp1, disp2])
-    >>> # Result is displacement field
+    >>> composed.shape
+    torch.Size([4, 2, 64, 64])
 
     Notes
     -----
     The composition uses matrix indexing ('ij') consistently. When composing displacement
     fields, the left field is interpolated using the right field as sampling coordinates.
+
+    Batch dimensions are automatically detected for displacement fields by comparing
+    tensor.ndim to the expected ndim + 1 (unbatched) or ndim + 2 (batched).
     """
     if len(transforms) == 0:
         raise ValueError('Cannot compose empty list of transforms')
@@ -757,13 +762,18 @@ def compose(
             )
 
         # Both are now displacement fields: compose them
-        # next_trf has shape (B, ndim, *spatial), so non_spatial_dims should be (0, 1)
+        ndim_if_unbatched = curr.shape[0]
+        num_spatial_if_unbatched = curr.ndim - 1
+        has_batch = ndim_if_unbatched != num_spatial_if_unbatched
+
+        non_spatial_dims = (0, 1) if has_batch else (0,)
+
         warped = spatial_transform(
             image=next_trf,
             trf=curr,
             mode=interpolation_mode,
             isdisp=True,
-            non_spatial_dims=(0, 1)
+            non_spatial_dims=non_spatial_dims
         )
         curr = curr + warped
 
