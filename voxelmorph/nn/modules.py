@@ -109,16 +109,13 @@ class SpatialTransformer(nn.Module):
 
         batch_size = moving_image.shape[0]
 
-        # Convert deformation field from (B, ndim, *spatial) to (B, *spatial, ndim)
-        deformation_field = deformation_field.moveaxis(1, -1)
-
         # Process each batch element independently
-        # vxm.functional.spatial_transform expects disp as (*spatial, ndim) without batch
+        # vxm.functional.spatial_transform expects disp as (ndim, *spatial) without batch
         warped_batch = []
         for b in range(batch_size):
             # Extract single batch element
             img_b = moving_image[b]  # (C, *spatial)
-            disp_b = deformation_field[b]  # (*spatial, ndim)
+            disp_b = deformation_field[b]  # (ndim, *spatial)
 
             # Apply spatial transform
             warped_b = vxm.functional.spatial_transform(
