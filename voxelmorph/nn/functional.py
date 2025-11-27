@@ -17,6 +17,7 @@ __all__ = [
     "disp_to_coords",
     "coords_to_disp",
     "integrate_disp",
+    "compose",
     "random_disp",
     "random_transform",
 ]
@@ -225,6 +226,65 @@ def integrate_disp(
     ])
 
     return integrated
+
+
+def compose(
+    transforms: Sequence[torch.Tensor],
+    interpolation_mode: str = 'bilinear',
+    origin_at_center: bool = True,
+    shape: Union[Sequence[int], None] = None
+) -> torch.Tensor:
+    """
+    Compose transforms for (B, ndim, *spatial) format displacement fields.
+
+    Composes a sequence of transforms into a single transform. For transforms [A, B, C],
+    the composed transform T satisfies T(x) = A(B(C(x))), meaning C is applied first,
+    then B, then A.
+
+    Parameters
+    ----------
+    transforms : Sequence[Tensor]
+        List of transforms to compose. Each transform should be:
+        - Displacement field: shape (B, ndim, *spatial)
+        - Affine matrix: shape (N, N+1) or (N+1, N+1) or batched (B, N, N+1)
+    interpolation_mode : str, default='bilinear'
+        Interpolation method for composing displacement fields.
+    origin_at_center : bool, default=True
+        Place origin at image center when converting affine matrices to displacement.
+    shape : Sequence[int] or None, default=None
+        Spatial shape for converting affine matrices to displacement fields.
+        Required if rightmost transform is an affine matrix.
+
+    Returns
+    -------
+    torch.Tensor
+        Composed transform as either:
+        - Affine matrix if all inputs are affine
+        - Displacement field with shape (B, ndim, *spatial) otherwise
+
+    Examples
+    --------
+    >>> import voxelmorph.nn.functional as vxf
+    >>> # Compose two batched displacement fields
+    >>> disp1 = torch.randn(2, 2, 64, 64)  # (B, ndim, H, W)
+    >>> disp2 = torch.randn(2, 2, 64, 64)
+    >>> composed = vxf.compose([disp1, disp2])
+    >>> composed.shape
+    torch.Size([2, 2, 64, 64])
+
+    >>> # Compose affine with batched displacement
+    >>> affine = torch.eye(3).unsqueeze(0).repeat(2, 1, 1)  # (B, 3, 3)
+    >>> disp = torch.randn(2, 2, 64, 64)
+    >>> composed = vxf.compose([affine, disp])
+    >>> composed.shape
+    torch.Size([2, 2, 64, 64])
+    """
+    return vxm.compose(
+        transforms=transforms,
+        interpolation_mode=interpolation_mode,
+        origin_at_center=origin_at_center,
+        shape=shape
+    )
 
 
 def random_disp(

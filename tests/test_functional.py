@@ -1158,3 +1158,60 @@ def test_vxf_coords_to_disp_not_implemented():
 
     with pytest.raises(NotImplementedError):
         vxf.coords_to_disp(coords)
+
+
+def test_vxf_compose_two_batched_displacements():
+    """
+    vxf.compose should compose two batched displacement fields.
+    """
+    batch_size = 2
+    shape = (16, 16)
+    ndim = len(shape)
+
+    # Constant displacement: shift by (1, 0)
+    disp1 = torch.zeros(batch_size, ndim, *shape)
+    disp1[:, 0, ...] = 1.0
+
+    # Constant displacement: shift by (0, 1)
+    disp2 = torch.zeros(batch_size, ndim, *shape)
+    disp2[:, 1, ...] = 1.0
+
+    composed = vxf.compose([disp1, disp2])
+
+    assert composed.shape == (batch_size, ndim, *shape)
+
+    # Interior should sum to (1, 1)
+    expected = torch.zeros(batch_size, ndim, *shape)
+    expected[:, 0, ...] = 1.0
+    expected[:, 1, ...] = 1.0
+
+    interior = composed[:, :, 2:-2, 2:-2]
+    expected_interior = expected[:, :, 2:-2, 2:-2]
+    assert torch.allclose(interior, expected_interior, atol=1e-5)
+
+
+def test_vxf_compose_matches_vxm():
+    """
+    vxf.compose should produce same results as vxm.compose for batched inputs.
+    """
+    batch_size = 2
+    disp1 = torch.randn(batch_size, 2, 16, 16)
+    disp2 = torch.randn(batch_size, 2, 16, 16)
+
+    vxf_result = vxf.compose([disp1, disp2])
+    vxm_result = vxm.compose([disp1, disp2])
+
+    assert torch.allclose(vxf_result, vxm_result, atol=1e-6)
+
+
+def test_vxf_compose_3d():
+    """
+    vxf.compose should work with 3d spatial data.
+    """
+    batch_size = 2
+    disp1 = torch.randn(batch_size, 3, 8, 8, 8)  # (B, ndim, D, H, W)
+    disp2 = torch.randn(batch_size, 3, 8, 8, 8)
+
+    composed = vxf.compose([disp1, disp2])
+
+    assert composed.shape == (batch_size, 3, 8, 8, 8)
