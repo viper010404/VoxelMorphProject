@@ -45,27 +45,30 @@ def angles_to_rotation_matrix(
     Returns
     -------
     Tensor
-        The computed `(ndim + 1, ndim + 1)` rotation matrix.
+        The computed `(ndim, ndim)` rotation matrix.
     """
     rotation = torch.as_tensor(rotation)
     if degrees:
         rotation = torch.deg2rad(rotation)
     rotation = torch.atleast_1d(rotation)
+    n_angles = len(rotation)
 
-    # build the matrix
-    if len(rotation) == 1:
+    if n_angles == 1:
         c, s = torch.cos(rotation[0]), torch.sin(rotation[0])
         matrix = torch.tensor([[c, -s], [s, c]], dtype=torch.float64)
-    elif len(rotation) == 3:
-        c, s = torch.cos(rotation[0]), torch.sin(rotation[0])
-        rx = torch.tensor([[1, 0, 0], [0, c, s], [0, -s, c]], dtype=torch.float64)
-        c, s = torch.cos(rotation[1]), torch.sin(rotation[1])
-        ry = torch.tensor([[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=torch.float64)
-        c, s = torch.cos(rotation[2]), torch.sin(rotation[2])
-        rz = torch.tensor([[c, s, 0], [-s, c, 0], [0, 0, 1]], dtype=torch.float64)
+
+    elif n_angles == 3:
+        cx, sx = torch.cos(rotation[0]), torch.sin(rotation[0])
+        cy, sy = torch.cos(rotation[1]), torch.sin(rotation[1])
+        cz, sz = torch.cos(rotation[2]), torch.sin(rotation[2])
+
+        rx = torch.tensor([[1, 0, 0], [0, cx, sx], [0, -sx, cx]], dtype=torch.float64)
+        ry = torch.tensor([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]], dtype=torch.float64)
+        rz = torch.tensor([[cz, sz, 0], [-sz, cz, 0], [0, 0, 1]], dtype=torch.float64)
         matrix = rx @ ry @ rz
+
     else:
-        raise ValueError(f'expected 1 (2D) or 3 (3D) rotation angles, got {len(rotation)}')
+        raise ValueError(f'expected 1 (2D) or 3 (3D) rotation angles, got {n_angles}')
 
     return matrix.to(rotation.device)
 
@@ -109,31 +112,31 @@ def params_to_affine(
     if ndim not in (2, 3):
         raise ValueError(f'affine transform must be 2D or 3D, got ndim {ndim}')
 
-    # check translation
+    n_rotation_angles = 3 if ndim == 3 else 1
+
+    # Validate and default translation
     translation = torch.zeros(ndim) if translation is None else torch.as_tensor(translation)
     if len(translation) != ndim:
         raise ValueError(f'translation must be of shape ({ndim},)')
 
-    # check rotation angles
-    expected = 3 if ndim == 3 else 1
-    rotation = torch.zeros(expected) if rotation is None else torch.as_tensor(rotation)
-    if rotation.ndim == 0 and ndim == 3 or rotation.ndim != 0 and rotation.shape[0] != expected:
-        raise ValueError(f'rotation must be of shape ({expected},)')
+    # Validate and default rotation
+    rotation = torch.zeros(n_rotation_angles) if rotation is None else torch.as_tensor(rotation)
+    rotation = torch.atleast_1d(rotation)
+    if rotation.shape[0] != n_rotation_angles:
+        raise ValueError(f'rotation must be of shape ({n_rotation_angles},)')
 
-    # check scaling factor
+    # Validate and default scale
     scale = torch.ones(ndim) if scale is None else torch.as_tensor(scale)
     if scale.ndim == 0:
         scale = scale.repeat(ndim)
     if scale.shape[0] != ndim:
         raise ValueError(f'scale must be of size {ndim}')
 
-    # check shearing
-    expected = 3 if ndim == 3 else 1
-    shear = torch.zeros(expected) if shear is None else torch.as_tensor(shear)
-    if shear.ndim == 0:
-        shear = shear.view(1)
-    if shear.shape[0] != expected:
-        raise ValueError(f'shear must be of shape ({expected},)')
+    # Validate and default shear
+    shear = torch.zeros(n_rotation_angles) if shear is None else torch.as_tensor(shear)
+    shear = torch.atleast_1d(shear)
+    if shear.shape[0] != n_rotation_angles:
+        raise ValueError(f'shear must be of shape ({n_rotation_angles},)')
 
     # start from translation
     T = torch.eye(ndim + 1, dtype=torch.float64)
@@ -215,42 +218,29 @@ def random_affine(
     >>> affine.shape
     torch.Size([3, 3])
     """
-    # Generate translation parameters
-    if sampling:
-        translation_range = sorted([-max_translation, max_translation])
-        translation = np.random.uniform(*translation_range, size=ndim)
-    else:
+    n_rotation_angles = 1 if ndim == 2 else 3
+
+    if not sampling:
         translation = np.array([max_translation] * ndim)
-
-    # Generate rotation parameters
-    if sampling:
-        rotation_range = sorted([-max_rotation, max_rotation])
-        rotation = np.random.uniform(*rotation_range, size=(1 if ndim == 2 else 3))
+        rotation = np.array([max_rotation] * n_rotation_angles)
+        scale = np.array([max_scaling] * ndim)
     else:
-        rotation = np.array([max_rotation] * (1 if ndim == 2 else 3))
-
-    # Generate scaling parameters
-    if sampling:
         if max_scaling < 1:
             raise ValueError(
-                'max scaling to random affine cannot be < 1, see function doc for more info'
+                'max_scaling must be >= 1 (scales are sampled in range [1/max, max])'
             )
+        translation = np.random.uniform(-max_translation, max_translation, size=ndim)
+        rotation = np.random.uniform(-max_rotation, max_rotation, size=n_rotation_angles)
+        scale_direction = np.random.choice([-1, 1], size=ndim)
+        scale = np.random.uniform(1, max_scaling, size=ndim) ** scale_direction
 
-        inv = np.random.choice([-1, 1], size=ndim)
-        scale = np.random.uniform(1, max_scaling, size=ndim) ** inv
-
-    else:
-        scale = np.array([max_scaling] * ndim)
-
-    # Compose from random parameters
-    aff = params_to_affine(
+    return params_to_affine(
         ndim=ndim,
         translation=translation,
         rotation=rotation,
         scale=scale,
         device=device
     )
-    return aff
 
 
 def affine_to_disp(
@@ -326,9 +316,7 @@ def affine_to_disp(
     assert isinstance(meshgrid, torch.Tensor)
     ndim = meshgrid.shape[0]
     spatial_shape = meshgrid.shape[1:]
-
     is_batched = affine.ndim == 3
-    batch_size = affine.shape[0] if is_batched else None
 
     if affine.shape[-1] != ndim + 1:
         raise ValueError(
@@ -336,43 +324,32 @@ def affine_to_disp(
             f'meshgrid dimensionality ({ndim}D)'
         )
 
-    # Adjust meshgrid to center origin if requested
-    grid = meshgrid.clone() if origin_at_center else meshgrid
+    # Center origin if requested
+    grid = meshgrid
     if origin_at_center:
-        for d in range(ndim):
-            grid[d] -= (spatial_shape[d] - 1) / 2
+        center_offsets = [(s - 1) / 2 for s in spatial_shape]
+        center_offsets = torch.tensor(center_offsets, device=meshgrid.device).view(-1, *[1] * ndim)
+        grid = meshgrid - center_offsets
 
     # Flatten grid: (ndim, *spatial) -> (ndim, num_voxels)
-    mesh = grid.reshape(ndim, -1)
-    out = mesh
+    coords = grid.reshape(ndim, -1)
 
-    # Optionally right-compose with displacement field
+    # Right-compose with displacement field if provided
     if warp_right is not None:
-        warp_spatial_shape = warp_right.shape[-ndim:]
-
-        if warp_spatial_shape != spatial_shape:
+        if warp_right.shape[-ndim:] != spatial_shape:
             raise ValueError(
-                f'warp_right spatial shape {warp_spatial_shape} does not match '
+                f'warp_right spatial shape {warp_right.shape[-ndim:]} does not match '
                 f'meshgrid shape {spatial_shape}'
             )
+        coords = coords + warp_right.reshape(*warp_right.shape[:-ndim], -1)
 
-        warp_flat = warp_right.reshape(*warp_right.shape[:-ndim], -1)
+    # Apply affine: A @ coords + t, then subtract original to get displacement
+    transformed = affine[..., :ndim, :ndim] @ coords + affine[..., :ndim, -1:]
+    disp_flat = transformed - grid.reshape(ndim, -1)
 
-        # Add to coordinates with broadcasting for batch dimension
-        out = out + warp_flat
-
-    # Apply affine transformation with broadcasting
-    out = affine[..., :ndim, :ndim] @ out + affine[..., :ndim, -1:]
-    out = out - mesh  # Subtract original mesh to get displacement
-
-    # Reshape back to spatial: (ndim, num_voxels) -> (ndim, *spatial)
-    # or (B, ndim, num_voxels) -> (B, ndim, *spatial)
-    if is_batched:
-        disp = out.reshape(batch_size, ndim, *spatial_shape)
-    else:
-        disp = out.reshape(ndim, *spatial_shape)
-
-    return disp
+    # Reshape back to spatial
+    output_shape = (affine.shape[0], ndim, *spatial_shape) if is_batched else (ndim, *spatial_shape)
+    return disp_flat.reshape(*output_shape)
 
 
 def disp_to_coords(
@@ -410,20 +387,17 @@ def disp_to_coords(
 
     if meshgrid is None:
         meshgrid = ne.volshape_to_ndgrid(size=spatial_shape, device=disp.device, stack=True)
-        assert isinstance(meshgrid, torch.Tensor), (
-            f'Expected torch.Tensor from volshape_to_ndgrid(stack=True). Got {type(meshgrid)}'
-        )
+        assert isinstance(meshgrid, torch.Tensor)
 
-    # Add displacement to base coordinates: (ndim, *spatial)
     coords = meshgrid + disp
 
     # Normalize each spatial dimension to [-1, 1]
     for d in range(ndim):
-        spatial_size = spatial_shape[d]
-        if spatial_size == 1:
-            coords[d] *= 0
+        size = spatial_shape[d]
+        if size > 1:
+            coords[d] = coords[d] * 2 / (size - 1) - 1
         else:
-            coords[d] = coords[d] * 2 / (spatial_size - 1) - 1
+            coords[d] = 0
 
     return coords
 
@@ -739,7 +713,6 @@ def compose(
     """
     if len(transforms) == 0:
         raise ValueError('Cannot compose empty list of transforms')
-
     if len(transforms) == 1:
         return transforms[0]
 
@@ -755,48 +728,44 @@ def compose(
     # Start from the rightmost transform (last to be applied)
     curr = transforms[-1]
 
-    # Iterate through remaining transforms in reverse order
     for next_trf in reversed(transforms[:-1]):
-
         curr_is_affine = is_affine_shape(curr.shape)
+        next_is_affine = is_affine_shape(next_trf.shape)
 
-        # Case 1: Dense warp on left, affine on right. Convert affine to disp
-        if not is_affine_shape(next_trf.shape):
-            if curr_is_affine:
-                curr_shape = next_trf.shape[1:]
-                if shape is not None:
-                    curr_shape = shape
-                curr = affine_to_disp(
-                    affine=curr,
-                    shape=curr_shape,
-                    origin_at_center=origin_at_center
-                )
+        # Case 1: Both affine - matrix multiply
+        if curr_is_affine and next_is_affine:
+            # Compose and remove homogeneous row
+            curr = (make_square_affine(next_trf) @ make_square_affine(curr))[..., :-1, :]
+            continue
 
-            # Now both are displacement fields: warp next using curr
-            # This computes: next(x + curr(x))
-            warped = spatial_transform(
-                image=next_trf,
-                trf=curr,
-                mode=interpolation_mode,
-                isdisp=True,
-                non_spatial_dims=(0,)
-            )
-            curr = curr + warped
-
-        # Case 2: Affine on left, dense warp on right
-        elif not curr_is_affine:
+        # Case 2: Affine on left, displacement on right
+        if next_is_affine and not curr_is_affine:
             curr = affine_to_disp(
                 next_trf,
                 shape=curr.shape[1:],
                 origin_at_center=origin_at_center,
                 warp_right=curr
             )
+            continue
 
-        # Case 3: Both are affine matrices
-        else:
-            next_sq = make_square_affine(next_trf)
-            curr_sq = make_square_affine(curr)
-            curr = (next_sq @ curr_sq)[..., :-1, :]  # Remove last row to return compact form
+        # Case 3: Displacement on left (convert affine to disp if needed, then compose)
+        if curr_is_affine:
+            curr = affine_to_disp(
+                affine=curr,
+                shape=shape if shape is not None else next_trf.shape[1:],
+                origin_at_center=origin_at_center
+            )
+
+        # Both are now displacement fields: compose them
+        # next_trf has shape (B, ndim, *spatial), so non_spatial_dims should be (0, 1)
+        warped = spatial_transform(
+            image=next_trf,
+            trf=curr,
+            mode=interpolation_mode,
+            isdisp=True,
+            non_spatial_dims=(0, 1)
+        )
+        curr = curr + warped
 
     return curr
 
@@ -859,37 +828,29 @@ def constant_shift_field(
     >>> flow[1, 0, 0]  # Unchanged
     tensor(4.)
     """
-    n_spatial_dims = len(spatial_shape)
+    ndim = len(spatial_shape)
 
-    # Convert shift_size to float32 tensor
+    # Normalize shift_size to tensor
     if isinstance(shift_size, (int, float)):
-        shift_size = torch.tensor([shift_size] * n_spatial_dims, dtype=torch.float32)
-    elif isinstance(shift_size, Sequence):
-        shift_size = torch.tensor(shift_size, dtype=torch.float32)
+        shift = torch.full((ndim,), shift_size, dtype=torch.float32)
     elif isinstance(shift_size, torch.Tensor):
-        shift_size = shift_size.float()
+        shift = shift_size.float()
     else:
+        shift = torch.tensor(shift_size, dtype=torch.float32)
+
+    if shift.shape[0] != ndim:
         raise ValueError(
-            f'shift_size must be int, float, Sequence, or Tensor, '
-            f'got {type(shift_size)}: {shift_size}'
+            f'shift_size must have {ndim} elements, got {shift.shape[0]}'
         )
 
-    if shift_size.shape[0] != n_spatial_dims:
-        raise ValueError(
-            f'shift_size must have {n_spatial_dims} elements to match spatial_shape. '
-            f'Got {shift_size.shape[0]} elements: {shift_size}'
-        )
-
-    # Reshape for broadcasting: (n_spatial_dims, 1, 1, ...)
-    shift_size = shift_size.view(-1, *[1] * n_spatial_dims).to(device=device)
-
-    # Create displacement field by broadcasting shift values across all spatial locations
-    flow_field = shift_size.expand(n_spatial_dims, *spatial_shape).clone()
+    # Broadcast shift values to full field: (ndim, *spatial_shape)
+    shift = shift.view(-1, *[1] * ndim).to(device=device)
+    field = shift.expand(ndim, *spatial_shape).clone()
 
     if normalize:
-        flow_field[0, ...] /= (spatial_shape[0] - 1)
+        field[0] /= (spatial_shape[0] - 1)
 
-    return flow_field
+    return field
 
 
 def is_affine_shape(shape: tuple) -> bool:
@@ -1049,7 +1010,6 @@ def random_disp(
         tensor_ndim=len(shape)
     )
 
-    # For displacement fields, only batch dimension is supported (not channel)
     if num_non_spatial > 1:
         raise ValueError(
             f'random_disp only supports batch dimension (non_spatial_dims=None or (0,)), '
@@ -1057,8 +1017,8 @@ def random_disp(
         )
 
     has_batch = num_non_spatial == 1
-    batch_size = shape[0] if has_batch else None
 
+    # Scale parameters by voxel size
     if np.isscalar(scales):
         scales = scales / voxsize
     else:
@@ -1066,9 +1026,8 @@ def random_disp(
     magnitude = magnitude / voxsize
 
     # Generate independent fractal noise for each spatial dimension
-    disp_components = []
-    for _ in range(num_spatial):
-        noise = ne.fractal_noise(
+    disp_components = [
+        ne.fractal_noise(
             shape=shape,
             scales=scales,
             magnitude=magnitude,
@@ -1076,22 +1035,22 @@ def random_disp(
             device=device,
             method=method
         )
-        disp_components.append(noise)
+        for _ in range(num_spatial)
+    ]
 
-    # Stack in channels-first format: (ndim, *spatial) or (B, ndim, *spatial)
-    # For batched: stack at dim=1 (after batch), for pure spatial: stack at dim=0
+    # Stack: (ndim, *spatial) or (B, ndim, *spatial)
     stack_dim = 1 if has_batch else 0
     disp = torch.stack(disp_components, dim=stack_dim)
 
+    # Apply integration if requested
     if integrations > 0:
-        if not has_batch:
-            disp = integrate_disp(disp, integrations, meshgrid)
+        if has_batch:
+            disp = torch.stack([
+                integrate_disp(disp[i], integrations, meshgrid)
+                for i in range(disp.shape[0])
+            ])
         else:
-            # Batched: integrate each sample
-            integrated = []
-            for i in range(batch_size):
-                integrated.append(integrate_disp(disp[i], integrations, meshgrid))
-            disp = torch.stack(integrated, dim=0)
+            disp = integrate_disp(disp, integrations, meshgrid)
 
     return disp
 
@@ -1188,7 +1147,6 @@ def random_transform(
         tensor_ndim=len(shape)
     )
 
-    # For displacement fields, only batch dimension is supported
     if num_non_spatial > 1:
         raise ValueError(
             f'random_transform only supports batch dimension (non_spatial_dims=None or (0,)), '
@@ -1196,27 +1154,18 @@ def random_transform(
         )
 
     has_batch = num_non_spatial == 1
-    if has_batch:
-        batch_size = shape[0]
-        spatial_shape = shape[1:]
-    else:
-        batch_size = 1  # Treat as batch of 1 for uniform processing
-        spatial_shape = shape
+    batch_size = shape[0] if has_batch else 1
+    spatial_shape = shape[1:] if has_batch else shape
+    meshgrid = ne.volshape_to_ndgrid(size=spatial_shape, device=device, stack=True)
 
-    # Generate transforms for each sample in batch
-    transforms = []
-    for _ in range(batch_size):
+    def generate_single_transform():
         trf = None
 
-        # Generate random affine
+        # Random affine component
         if ne.utils.bernoulli(p=affine_probability, shape=(1,)).item():
-            meshgrid = ne.volshape_to_ndgrid(size=spatial_shape, device=device, stack=True)
-
-            # Convert max_translation from mm to voxel
-            max_translation_vox = max_translation / voxsize
             matrix = random_affine(
                 ndim=num_spatial,
-                max_translation=max_translation_vox,
+                max_translation=max_translation / voxsize,
                 max_rotation=max_rotation,
                 max_scaling=max_scaling,
                 device=device,
@@ -1224,41 +1173,28 @@ def random_transform(
             )
             trf = affine_to_disp(matrix, meshgrid)
 
-        # Generate nonlinear warp
+        # Random nonlinear warp component
         if ne.utils.bernoulli(p=warp_probability, shape=(1,)).item():
-            warp_scales = np.random.uniform(*warp_scales_range)
-            warp_magnitude = np.random.uniform(*warp_magnitude_range)
-
             disp = random_disp(
                 shape=spatial_shape,
-                scales=warp_scales,
-                magnitude=warp_magnitude,
+                scales=np.random.uniform(*warp_scales_range),
+                magnitude=np.random.uniform(*warp_magnitude_range),
                 integrations=warp_integrations,
                 voxsize=voxsize,
                 device=device,
                 method=method
             )
-
-            # Compose with affine if present
             if trf is None:
                 trf = disp
             else:
-                # Warp the displacement field by the affine transform and add
-                trf = trf + spatial_transform(
-                    disp,
-                    trf,
-                    meshgrid=meshgrid,
-                    non_spatial_dims=(0,)
-                )
+                trf = trf + spatial_transform(disp, trf, meshgrid=meshgrid, non_spatial_dims=(0,))
 
-        # If no transform was generated, create identity (zero displacement)
+        # Default to identity transform
         if trf is None:
             trf = torch.zeros(num_spatial, *spatial_shape, device=device)
 
-        transforms.append(trf)
+        return trf
 
-    # Stack if batched, otherwise return single transform
-    if has_batch:
-        return torch.stack(transforms, dim=0)
-    else:
-        return transforms[0]
+    transforms = [generate_single_transform() for _ in range(batch_size)]
+
+    return torch.stack(transforms, dim=0) if has_batch else transforms[0]
