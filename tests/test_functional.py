@@ -20,14 +20,10 @@ def test_affine_to_disp_identity():
     ndim = len(shape)
 
     # Identity affine
-    affine = torch.eye(
-        ndim + 1,
-        dtype=grid.dtype,
-        device=grid.device
-    )
+    affine = torch.eye(ndim + 1, dtype=grid.dtype, device=grid.device)
 
     # Get displacement field
-    disp = vxm.functional.affine_to_disp(affine, grid)
+    disp = vxm.affine_to_disp(affine, grid)
 
     # output shape and dtype
     assert disp.shape == shape + (ndim,)
@@ -39,7 +35,7 @@ def test_affine_to_disp_identity():
 
 def test_affine_to_disp_translation():
     """
-    Pure translation affine should yield a constant field = translation.
+    Translation affine should yield a constant field.
     """
     shape = (2, 2)
     grid = ne.volshape_to_ndgrid(size=shape, stack=True)
@@ -47,16 +43,14 @@ def test_affine_to_disp_translation():
     tx, ty = 2.0, 3.0
 
     # build a 2D affine with translation in the last column
-    affine = torch.eye(
-        ndim + 1, dtype=grid.dtype, device=grid.device
-    )
+    affine = torch.eye(ndim + 1, dtype=grid.dtype, device=grid.device)
 
     # Make the translation
     affine[0, -1] = tx
     affine[1, -1] = ty
 
     # Get displacement field
-    disp = vxm.functional.affine_to_disp(affine, grid)
+    disp = vxm.affine_to_disp(affine, grid)
 
     # expected a field of shape (2,2,2) filled with [tx,ty]
     expected = torch.stack(
@@ -525,8 +519,14 @@ def test_integrate_disp_single_step():
 def test_random_transform():
     """
     random_transform should generate valid transforms.
+
+    Note: vxf.random_transform expects (B, C, *spatial) format and returns
+    (B, *spatial, ndim) displacement fields.
     """
-    shape = (3, 3)
+    # Shape in (B, C, H, W) format
+    shape = (1, 1, 3, 3)
+    spatial_shape = shape[2:]  # (3, 3)
+    ndim = len(spatial_shape)  # 2
 
     # Test affine-only transform
     trf = vxf.random_transform(
@@ -536,7 +536,8 @@ def test_random_transform():
     )
 
     assert trf is not None
-    assert trf.shape == shape + (len(shape),)
+    # Output shape is (B, *spatial, ndim)
+    assert trf.shape == (shape[0],) + spatial_shape + (ndim,)
 
     # Test warp-only transform
     trf = vxf.random_transform(
@@ -546,7 +547,7 @@ def test_random_transform():
     )
 
     assert trf is not None
-    assert trf.shape == shape + (len(shape),)
+    assert trf.shape == (shape[0],) + spatial_shape + (ndim,)
 
 
 def test_affine_to_disp_large_translation():
@@ -706,3 +707,73 @@ def test_disp_to_coords_axis_flip():
     # Check that the flip operation was applied
     # The last axis should be flipped from [y, x] to [x, y]
     assert coords[0, 0, 0] != coords[0, 0, 1]  # Should be different after flip
+
+
+def test_random_affine_shape_2d():
+    """
+    random_affine should return valid 2D affine matrix with correct shape and structure.
+    """
+    affine = vxm.random_affine(
+        ndim=2,
+        max_translation=10.0,
+        max_rotation=15.0,
+        max_scaling=1.2
+    )
+
+    # Check shape: (ndim+1, ndim+1) = (3, 3)
+    assert affine.shape == (3, 3)
+    assert affine.dtype == torch.float32
+
+    # Affine should be invertible (non-zero determinant)
+    det = torch.linalg.det(affine)
+    assert det.abs() > 1e-6
+
+
+def test_random_affine_shape_3d():
+    """
+    random_affine should return valid 3D affine matrix with correct shape and structure.
+    """
+    affine = vxm.random_affine(
+        ndim=3,
+        max_translation=5.0,
+        max_rotation=10.0,
+        max_scaling=1.1
+    )
+
+    # Check shape: (ndim+1, ndim+1) = (4, 4)
+    assert affine.shape == (4, 4)
+    assert affine.dtype == torch.float32
+
+    # Affine should be invertible (non-zero determinant)
+    det = torch.linalg.det(affine)
+    assert det.abs() > 1e-6
+
+
+def test_random_affine_deterministic_translation():
+    """
+    random_affine with sampling=False should use max values directly.
+
+    With sampling=False:
+    - translation = [max_translation] * ndim
+    - rotation = [max_rotation] * ndim (1 for 2D, 3 for 3D)
+    - scale = [max_scaling] * ndim
+    """
+    max_translation = 5.0
+    max_rotation = 0.0  # No rotation for simpler verification
+    max_scaling = 1.0   # No scaling for simpler verification
+
+    affine = vxm.random_affine(
+        ndim=2,
+        max_translation=max_translation,
+        max_rotation=max_rotation,
+        max_scaling=max_scaling,
+        sampling=False
+    )
+
+    # With no rotation and no scaling, affine should be identity + translation
+    expected_translation = torch.tensor([max_translation, max_translation], dtype=torch.float32)
+    assert torch.allclose(affine[:2, -1], expected_translation)
+
+    # Linear part should be identity (no rotation, no scaling)
+    expected_linear = torch.eye(2, dtype=torch.float32)
+    assert torch.allclose(affine[:2, :2], expected_linear)
