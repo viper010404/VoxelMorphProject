@@ -39,15 +39,16 @@ def spatial_transform(
     trf : torch.Tensor or None
         Transformation field. Can be:
         - Affine matrix: shape (N+1, N+1) or (N, N+1)
-        - Displacement field: shape (*spatial, N)
-        - Coordinate field: shape (*spatial, N)
+        - Displacement field: shape (N, *spatial) - channels-first format
+        - Coordinate field: shape (*spatial, N) - channels-last for grid_sample
         - None: returns image unchanged
     method : str, default='linear'
         Interpolation mode ('linear' or 'nearest').
     isdisp : bool, default=True
-        If True, treat trf as displacement field. If False, treat as coordinates.
+        If True, treat trf as displacement field (N, *spatial). If False, treat as
+        coordinates (*spatial, N) ready for grid_sample.
     meshgrid : torch.Tensor or None, default=None
-        Pre-computed coordinate grid.
+        Pre-computed coordinate grid of shape (ndim, *spatial).
     origin_at_center : bool, default=True
         Place origin at image center for affine transformations.
 
@@ -60,14 +61,14 @@ def spatial_transform(
     --------
     >>> # 2D image with batch and channel
     >>> image = torch.randn(2, 3, 64, 64)
-    >>> disp = torch.randn(64, 64, 2)
+    >>> disp = torch.randn(2, 64, 64)  # (ndim, H, W)
     >>> warped = spatial_transform(image, disp)
     >>> warped.shape
     torch.Size([2, 3, 64, 64])
 
     >>> # 3D image with batch and channel
     >>> image = torch.randn(1, 1, 64, 64, 64)
-    >>> disp = torch.randn(64, 64, 64, 3)
+    >>> disp = torch.randn(3, 64, 64, 64)  # (ndim, D, H, W)
     >>> warped = spatial_transform(image, disp)
     >>> warped.shape
     torch.Size([1, 1, 64, 64, 64])
@@ -97,8 +98,8 @@ def random_disp(
     """
     Generate random displacement field for images in (B, C, *spatial) format.
 
-    Takes shape in (B, C, *spatial) format (matching image tensors) but outputs
-    displacement field in (B, *spatial, ndim) format for use with grid_sample.
+    Takes shape in (B, C, *spatial) format (matching image tensors) and outputs
+    displacement field in (B, ndim, *spatial) format - channels-first format.
     The channel dimension is ignored since displacement is per-voxel, not per-channel.
 
     Parameters
@@ -118,7 +119,8 @@ def random_disp(
     voxsize : float, default=1
         Voxel size for scaling smoothing and magnitude parameters.
     meshgrid : torch.Tensor or None, default=None
-        Coordinate grid for integration. If None and integrations > 0, computed internally.
+        Coordinate grid of shape (ndim, *spatial) for integration. If None and
+        integrations > 0, computed internally.
     device : torch.device or None, default=None
         Device for tensor allocation.
     method : {'blur', 'upsample'}, default='upsample'
@@ -129,19 +131,19 @@ def random_disp(
     Returns
     -------
     torch.Tensor
-        Displacement field with shape (B, *spatial, ndim).
+        Displacement field with shape (B, ndim, *spatial) - channels-first format.
 
     Examples
     --------
     >>> # Generate displacement for 2D image with shape (B, C, H, W)
     >>> disp = random_disp(shape=(1, 1, 64, 64), scales=5.0, magnitude=3.0)
     >>> disp.shape
-    torch.Size([1, 64, 64, 2])
+    torch.Size([1, 2, 64, 64])
 
     >>> # Generate displacement for 3D image with shape (B, C, D, H, W)
     >>> disp = random_disp(shape=(2, 3, 32, 32, 32), integrations=5)
     >>> disp.shape
-    torch.Size([2, 32, 32, 32, 3])
+    torch.Size([2, 3, 32, 32, 32])
     """
     # Extract batch and spatial shape, ignoring channel dimension
     batch_size = shape[0]
@@ -178,8 +180,8 @@ def random_transform(
     """
     Generate random spatial transformation for images in (B, C, *spatial) format.
 
-    Takes shape in (B, C, *spatial) format (matching image tensors) but outputs
-    displacement field in (B, *spatial, ndim) format for use with grid_sample.
+    Takes shape in (B, C, *spatial) format (matching image tensors) and outputs
+    displacement field in (B, ndim, *spatial) format - channels-first format.
 
     Parameters
     ----------
@@ -214,19 +216,19 @@ def random_transform(
     Returns
     -------
     torch.Tensor
-        Displacement field with shape (B, *spatial, ndim).
+        Displacement field with shape (B, ndim, *spatial) - channels-first format.
 
     Examples
     --------
     >>> # Generate transform for 2D image with shape (B, C, H, W)
     >>> trf = random_transform(shape=(1, 1, 64, 64))
     >>> trf.shape
-    torch.Size([1, 64, 64, 2])
+    torch.Size([1, 2, 64, 64])
 
     >>> # Generate transform for 3D image with shape (B, C, D, H, W)
     >>> trf = random_transform(shape=(2, 3, 32, 32, 32), max_rotation=10.0)
     >>> trf.shape
-    torch.Size([2, 32, 32, 32, 3])
+    torch.Size([2, 3, 32, 32, 32])
     """
     # Extract batch and spatial shape, ignoring channel dimension
     batch_size = shape[0]
