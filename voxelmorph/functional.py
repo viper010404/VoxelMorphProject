@@ -270,7 +270,7 @@ def affine_to_disp(
         affine of shape (B, N, N+1) or (B, N+1, N+1).
         Expected to be a vox2vox target-to-source transformation.
     meshgrid : Tensor, optional
-        Pre-computed meshgrid tensor of shape (*spatial_shape, N), where N is the spatial
+        Pre-computed meshgrid tensor of shape (N, *spatial_shape), where N is the spatial
         dimensionality. If None, will be computed from `shape` parameter.
     origin_at_center : bool, optional
         If True, place the coordinate system origin at the image center. If False, origin
@@ -279,14 +279,15 @@ def affine_to_disp(
         Spatial shape (N dimensions) to create meshgrid if `meshgrid` is not provided.
         Required if `meshgrid` is None.
     warp_right : Tensor, optional
-        Right-compose the affine with this displacement field of shape (*spatial_shape, N).
+        Right-compose the affine with this displacement field of shape (N, *spatial_shape)
+        or (B, N, *spatial_shape) for batched.
         Computes affine(x + warp_right(x)) - x. Useful for composing transforms.
 
     Returns
     -------
     Tensor
-        Displacement field of shape (*spatial_shape, N) for single affine, or
-        (B, *spatial_shape, N) for batched affine.
+        Displacement field of shape (N, *spatial_shape) for single affine, or
+        (B, N, *spatial_shape) for batched affine.
 
     Examples
     --------
@@ -301,30 +302,31 @@ def affine_to_disp(
 
     >>> # Using shape parameter instead
     >>> disp = affine_to_disp(affine, shape=(64, 64))
+    >>> disp.shape
+    torch.Size([2, 64, 64])
 
     >>> # Compose affine with existing displacement field
-    >>> warp = torch.randn(64, 64, 2)
+    >>> warp = torch.randn(2, 64, 64)  # (ndim, H, W)
     >>> composed = affine_to_disp(affine, shape=(64, 64), warp_right=warp)
 
     >>> # Batched affine matrices
     >>> affines = torch.eye(3).unsqueeze(0).repeat(2, 1, 1)  # (2, 3, 3)
     >>> disp = affine_to_disp(affines, shape=(64, 64))
     >>> disp.shape
-    torch.Size([2, 64, 64, 2])
+    torch.Size([2, 2, 64, 64])
     """
     if meshgrid is None:
         if shape is None:
             raise ValueError("Either `meshgrid` or `shape` must be provided")
 
-        meshgrid = ne.volshape_to_ndgrid(                           # (*spatial, ndim)
+        meshgrid = ne.volshape_to_ndgrid(
             size=shape, device=affine.device, dtype=affine.dtype, stack=True
         )
 
     assert isinstance(meshgrid, torch.Tensor)
-    ndim = meshgrid.shape[-1]
-    spatial_shape = meshgrid.shape[:-1]
+    ndim = meshgrid.shape[0]
+    spatial_shape = meshgrid.shape[1:]
 
-    # Check if affine is batched
     is_batched = affine.ndim == 3
     batch_size = affine.shape[0] if is_batched else None
 
@@ -338,23 +340,23 @@ def affine_to_disp(
     grid = meshgrid.clone() if origin_at_center else meshgrid
     if origin_at_center:
         for d in range(ndim):
-            grid[..., d] -= (spatial_shape[d] - 1) / 2
+            grid[d] -= (spatial_shape[d] - 1) / 2
 
-    # Flatten and transpose grid
-    mesh = grid.reshape(-1, ndim).T  # (ndim, num_voxels)
+    # Flatten grid: (ndim, *spatial) -> (ndim, num_voxels)
+    mesh = grid.reshape(ndim, -1)
     out = mesh
 
     # Optionally right-compose with displacement field
     if warp_right is not None:
-        if warp_right.shape[-ndim - 1: -1] != spatial_shape:
+        warp_spatial_shape = warp_right.shape[-ndim:]
+
+        if warp_spatial_shape != spatial_shape:
             raise ValueError(
-                f'warp_right spatial shape {warp_right.shape[-ndim - 1:-1]} does not match '
+                f'warp_right spatial shape {warp_spatial_shape} does not match '
                 f'meshgrid shape {spatial_shape}'
             )
 
-        # Flatten and transpose warp
-        warp_flat = warp_right.reshape(*warp_right.shape[:-ndim - 1], -1, ndim)
-        warp_flat = warp_flat.transpose(-2, -1)
+        warp_flat = warp_right.reshape(*warp_right.shape[:-ndim], -1)
 
         # Add to coordinates with broadcasting for batch dimension
         out = out + warp_flat
@@ -362,13 +364,13 @@ def affine_to_disp(
     # Apply affine transformation with broadcasting
     out = affine[..., :ndim, :ndim] @ out + affine[..., :ndim, -1:]
     out = out - mesh  # Subtract original mesh to get displacement
-    out = out.transpose(-2, -1)
 
-    # Reshape to include batch dimension if affine was batched
+    # Reshape back to spatial: (ndim, num_voxels) -> (ndim, *spatial)
+    # or (B, ndim, num_voxels) -> (B, ndim, *spatial)
     if is_batched:
-        disp = out.reshape(batch_size, *spatial_shape, ndim)
+        disp = out.reshape(batch_size, ndim, *spatial_shape)
     else:
-        disp = out.reshape(*spatial_shape, ndim)
+        disp = out.reshape(ndim, *spatial_shape)
 
     return disp
 
@@ -376,57 +378,35 @@ def affine_to_disp(
 def disp_to_coords(
     disp: torch.Tensor,
     meshgrid: Union[torch.Tensor, None] = None,
-    non_spatial_dims: Union[Tuple[int, ...], None] = None
 ) -> torch.Tensor:
     """
-    Convert displacement field to normalized coordinates for grid_sample.
+    Convert displacement field to normalized coordinates in [-1, 1] range for grid_sample.
 
-    Shape-agnostic implementation. Displacement fields always end with a coordinate
-    dimension (*spatial, ndim), and can have optional leading non-spatial dimensions.
+    Adds displacement to base meshgrid coordinates and normalizes to [-1, 1].
 
     Parameters
     ----------
     disp : torch.Tensor
-        Displacement field. Shape depends on non_spatial_dims:
-        - (*spatial, ndim) if non_spatial_dims=None
-        - (C, *spatial, ndim) if non_spatial_dims=(0,)
-        - (B, C, *spatial, ndim) if non_spatial_dims=(0, 1)
-        The last dimension contains displacement vectors of length ndim.
+        Displacement field with shape (ndim, *spatial).
     meshgrid : torch.Tensor or None, default=None
-        Pre-computed coordinate grid of shape (*spatial, ndim). If None, computed
-        from displacement field spatial shape.
-    non_spatial_dims : Tuple[int, ...] or None, default=None
-        Which leading dimensions are non-spatial (before spatial dims):
-        - None: pure spatial displacement field
-        - (0,): first dimension is non-spatial (e.g., channel or batch)
-        - (0, 1): first two dimensions are non-spatial (e.g., batch and channel)
-        - etc..
+        Pre-computed coordinate grid of shape (ndim, *spatial). If None, computed
+        from displacement field shape.
 
     Returns
     -------
     torch.Tensor
-        Normalized coordinates in range [-1, 1] for torch.nn.functional.grid_sample.
-        Same shape as input displacement field.
+        Normalized coordinates in range [-1, 1] with shape (ndim, *spatial).
 
     Examples
     --------
-    >>> # Pure spatial 2D displacement field
-    >>> disp = torch.randn(64, 64, 2)
+    >>> # 2D displacement field (ndim, H, W)
+    >>> disp = torch.randn(2, 64, 64)
     >>> coords = disp_to_coords(disp)
     >>> coords.shape
-    torch.Size([64, 64, 2])
-
-    >>> # With batch and channel dimensions
-    >>> disp = torch.randn(2, 3, 64, 64, 2)
-    >>> coords = disp_to_coords(disp, non_spatial_dims=(0, 1))
-    >>> coords.shape
-    torch.Size([2, 3, 64, 64, 2])
+    torch.Size([2, 64, 64])
     """
-    # Parse non spatial -- disp has shape (*non_spatial, *spatial, ndim)
-    num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
-        non_spatial_dims, disp.ndim - 1
-    )
-    spatial_shape = disp.shape[num_non_spatial: -1]
+    ndim = disp.shape[0]
+    spatial_shape = disp.shape[1:]
 
     if meshgrid is None:
         meshgrid = ne.volshape_to_ndgrid(size=spatial_shape, device=disp.device, stack=True)
@@ -434,21 +414,16 @@ def disp_to_coords(
             f'Expected torch.Tensor from volshape_to_ndgrid(stack=True). Got {type(meshgrid)}'
         )
 
-    # Normalize each spatial dimension to [-1, 1] for grid_sample
+    # Add displacement to base coordinates: (ndim, *spatial)
     coords = meshgrid + disp
-    for d in range(num_spatial):
-        spatial_idx = num_non_spatial + d
-        spatial_size = disp.shape[spatial_idx]
 
+    # Normalize each spatial dimension to [-1, 1]
+    for d in range(ndim):
+        spatial_size = spatial_shape[d]
         if spatial_size == 1:
-            coords[..., d] *= 0
-
+            coords[d] *= 0
         else:
-            coords[..., d] *= 2 / (spatial_size - 1)
-            coords[..., d] -= 1
-
-    # Flip coordinate order for grid_sample (expects reversed spatial dims)
-    coords = coords.flip(-1)
+            coords[d] = coords[d] * 2 / (spatial_size - 1) - 1
 
     return coords
 
@@ -468,42 +443,37 @@ def coords_to_disp(
     ----------
     coords : torch.Tensor
         Normalized coordinates in range [-1, 1] (output from grid_sample or disp_to_coords).
-        Shape depends on non_spatial_dims:
-        - (*spatial, ndim) if non_spatial_dims=None
-        - (C, *spatial, ndim) if non_spatial_dims=(0,)
-        - (B, C, *spatial, ndim) if non_spatial_dims=(0, 1)
-        The last dimension contains coordinate vectors of length ndim.
+        Shape: (*non_spatial, *spatial, ndim) - channels-last format from grid_sample.
     meshgrid : torch.Tensor or None, default=None
-        Pre-computed coordinate grid of shape (*spatial, ndim). If None, computed
+        Pre-computed coordinate grid of shape (ndim, *spatial). If None, computed
         from coordinate field spatial shape.
     non_spatial_dims : Tuple[int, ...] or None, default=None
         Which leading dimensions are non-spatial (before spatial dims):
-        - None: pure spatial coordinate field
-        - (0,): first dimension is non-spatial (e.g., channel or batch)
-        - (0, 1): first two dimensions are non-spatial (e.g., batch and channel)
+        - None: pure spatial coordinate field (*spatial, ndim)
+        - (0,): first dimension is non-spatial, e.g., (B, *spatial, ndim)
 
     Returns
     -------
     torch.Tensor
-        Displacement field with same shape as input coordinates.
+        Displacement field in channels-first format: (*non_spatial, ndim, *spatial).
 
     Examples
     --------
-    >>> # Pure spatial 2D coordinates
-    >>> coords = torch.randn(64, 64, 2)
+    >>> # Pure spatial 2D coordinates -> displacement
+    >>> coords = torch.randn(64, 64, 2)  # (*spatial, ndim)
     >>> disp = coords_to_disp(coords)
     >>> disp.shape
-    torch.Size([64, 64, 2])
+    torch.Size([2, 64, 64])  # (ndim, *spatial)
 
-    >>> # With batch and channel dimensions
-    >>> coords = torch.randn(2, 3, 64, 64, 2)
-    >>> disp = coords_to_disp(coords, non_spatial_dims=(0, 1))
+    >>> # Batched coordinates -> displacement
+    >>> coords = torch.randn(4, 64, 64, 2)  # (B, *spatial, ndim)
+    >>> disp = coords_to_disp(coords, non_spatial_dims=(0,))
     >>> disp.shape
-    torch.Size([2, 3, 64, 64, 2])
+    torch.Size([4, 2, 64, 64])  # (B, ndim, *spatial)
 
     >>> # Round-trip conversion
     >>> import voxelmorph as vxm
-    >>> original_disp = torch.randn(64, 64, 2)
+    >>> original_disp = torch.randn(2, 64, 64)  # (ndim, *spatial)
     >>> coords = vxm.disp_to_coords(original_disp)
     >>> reconstructed_disp = vxm.coords_to_disp(coords)
     >>> torch.allclose(original_disp, reconstructed_disp, atol=1e-6)
@@ -544,17 +514,17 @@ def spatial_transform(
         Transformation field. Can be:
         - Affine matrix: shape (N+1, N+1) or (N, N+1)
         - Batched affine matrix: shape (B, N+1, N+1) or (B, N, N+1)
-        - Displacement field: shape (*spatial, N) or (B, *spatial, N)
-        - Coordinate field: shape (*spatial, N) or (B, *spatial, N)
+        - Displacement field: shape (N, *spatial) or (B, N, *spatial) - channels-first
+        - Coordinate field: shape (*spatial, N) or (B, *spatial, N) - channels-last for grid_sample
         - None: returns image unchanged
     mode : {'linear', 'nearest'}, default='linear'
         Interpolation mode. 'linear' will auto-detect appropriate mode (bilinear/trilinear) based
         on spatial dimensionality.
     isdisp : bool, default=True
-        If True, treat trf as displacement field and convert to coordinates. If False, treat trf as
-        normalized coordinates ready for grid_sample.
+        If True, treat trf as displacement field (ndim, *spatial) and normalize to [-1, 1].
+        If False, treat trf as already-normalized coordinates (ndim, *spatial).
     meshgrid : torch.Tensor or None, default=None
-        Pre-computed coordinate grid. If None, computed from image shape.
+        Pre-computed coordinate grid of shape (ndim, *spatial). If None, computed from image shape.
     origin_at_center : bool, default=True
         Place origin at image center when converting affine matrices to displacement.
     non_spatial_dims : Tuple[int, ...] or None, default=None
@@ -575,23 +545,23 @@ def spatial_transform(
 
     Examples
     --------
-    >>> # Pure spatial image (H, W)
+    >>> # Pure spatial image (H, W) with displacement (ndim, H, W)
     >>> image = torch.randn(64, 64)
-    >>> disp = torch.randn(64, 64, 2)
+    >>> disp = torch.randn(2, 64, 64)
     >>> warped = spatial_transform(image, disp)
     >>> warped.shape
     torch.Size([64, 64])
 
     >>> # Image with channel dimension (C, H, W)
     >>> image = torch.randn(3, 64, 64)
-    >>> disp = torch.randn(64, 64, 2)
+    >>> disp = torch.randn(2, 64, 64)
     >>> warped = spatial_transform(image, disp, non_spatial_dims=(0,))
     >>> warped.shape
     torch.Size([3, 64, 64])
 
-    >>> # Image with batch and channel (B, C, H, W)
+    >>> # Image with batch and channel (B, C, H, W), batched displacement (B, ndim, H, W)
     >>> image = torch.randn(2, 3, 64, 64)
-    >>> disp = torch.randn(64, 64, 2)
+    >>> disp = torch.randn(2, 2, 64, 64)
     >>> warped = spatial_transform(image, disp, non_spatial_dims=(0, 1))
     >>> warped.shape
     torch.Size([2, 3, 64, 64])
@@ -613,12 +583,18 @@ def spatial_transform(
     )
     spatial_shape = image.shape[num_non_spatial:]
 
-    # Single affine: (N+1, N+1) or (N, N+1)
-    # Batched affine: (B, N+1, N+1) or (B, N, N+1)
-    has_affine_ndim = trf.ndim in (2, 3)
-    has_affine_cols = trf.shape[-1] == num_spatial + 1
-    has_affine_rows = trf.shape[-2] in (num_spatial, num_spatial + 1)
-    is_affine = has_affine_ndim and has_affine_cols and has_affine_rows
+    is_affine = False
+    if trf.ndim == 2 and is_affine_shape(trf.shape):
+        is_affine = True
+    elif trf.ndim == 3 and is_affine_shape(trf.shape):
+        trf_spatial_like = trf.shape[1:]
+        if trf_spatial_like == spatial_shape:
+            is_affine = False
+        else:
+            rows, cols = trf.shape[-2], trf.shape[-1]
+            # Last dimensions are small. probably an affine. Could misclassify small disp field
+            if rows <= 4 and cols <= 5:
+                is_affine = True
 
     if is_affine:
         # Invert affine to get source-to-target mapping for warping
@@ -626,12 +602,21 @@ def spatial_transform(
         trf = affine_to_disp(trf, meshgrid, shape=spatial_shape, origin_at_center=origin_at_center)
         isdisp = True
 
+    # Detect batch dimension in transform
+    # trf is (ndim, *spatial) or (B, ndim, *spatial)
+    trf_has_batch_dim = trf.ndim > (num_spatial + 1)
+
     if isdisp:
-        # Determine non_spatial_dims for displacement field
-        # If trf has batch dimension, it will be shape (B, *spatial, ndim)
-        trf_has_batch_dim = trf.ndim > (num_spatial + 1)
-        disp_non_spatial_dims = (0,) if trf_has_batch_dim else None
-        trf = disp_to_coords(trf, meshgrid=meshgrid, non_spatial_dims=disp_non_spatial_dims)
+        if trf_has_batch_dim:
+            coords_list = [disp_to_coords(trf[i], meshgrid=meshgrid) for i in range(trf.shape[0])]
+            trf = torch.stack(coords_list, dim=0)
+        else:
+            trf = disp_to_coords(trf, meshgrid=meshgrid)
+
+    # Convert (ndim, *spatial) -> (*spatial, ndim) for grid_sample
+    # and flip coordinate order (grid_sample expects reversed spatial dims)
+    ndim_dim = 1 if trf_has_batch_dim else 0
+    trf = trf.movedim(ndim_dim, -1).flip(-1)
 
     if mode == 'linear':
         mode = ne.utils.infer_linear_interpolation_mode(num_spatial)
@@ -644,12 +629,10 @@ def spatial_transform(
         image = image.type(torch.float32)
 
     # Add dimensions to reach (B, C, *spatial) format
-    num_dims_to_add = 2 - num_non_spatial
-    for _ in range(num_dims_to_add):
-        image = image.unsqueeze(0)
+    image, dims_added = ne.functional.pad_batch_channel(image, non_spatial_dims)
 
     # Prepare coordinates for grid_sample (requires batch dimension)
-    # Coordinates format: (*spatial, ndim) or (B, *spatial, ndim)
+    # After conversion, trf is (*spatial, ndim) or (B, *spatial, ndim)
     trf_has_batch_dim = trf.ndim > (num_spatial + 1)
     if not trf_has_batch_dim:
         trf = trf.unsqueeze(0)
@@ -660,8 +643,7 @@ def spatial_transform(
     )
 
     # Restore original format
-    for _ in range(num_dims_to_add):
-        transformed = transformed.squeeze(0)
+    transformed = ne.functional.unpad_batch_channel(transformed, dims_added)
     if original_dtype is not None:
         transformed = transformed.type(original_dtype)
 
@@ -677,16 +659,14 @@ def integrate_disp(
     TODOC
     """
     if meshgrid is None:
-        meshgrid = ne.volshape_to_ndgrid(size=disp.shape[:-1], device=disp.device, stack=True)
+        meshgrid = ne.volshape_to_ndgrid(size=disp.shape[1:], device=disp.device, stack=True)
 
     if steps == 0:
         return disp
 
     disp = disp / (2 ** steps)
     for _ in range(steps):
-        disp += spatial_transform(
-            disp.movedim(-1, 0), disp, meshgrid=meshgrid, non_spatial_dims=(0,)
-        ).movedim(0, -1)
+        disp = disp + spatial_transform(disp, disp, meshgrid=meshgrid, non_spatial_dims=(0,))
 
     return disp
 
@@ -709,7 +689,7 @@ def compose(
     transforms : Sequence[Tensor]
         List or tuple of affine matrices and/or displacement fields to compose.
         - Affine matrices: shape (..., N, N+1) or (..., N+1, N+1)
-        - Displacement fields: shape (..., *spatial_shape, N)
+        - Displacement fields: shape (N, *spatial_shape) - channels-first format
     interpolation_mode : str, default='bilinear'
         Interpolation method for composing displacement fields.
         Options: 'bilinear', 'nearest', 'trilinear'.
@@ -726,7 +706,7 @@ def compose(
     torch.Tensor
         Composed transform as either:
         - Affine matrix of shape (..., N, N+1) if all inputs are affine
-        - Displacement field of shape (..., *spatial_shape, N) otherwise
+        - Displacement field of shape (N, *spatial_shape) otherwise
 
     Examples
     --------
@@ -739,16 +719,16 @@ def compose(
     >>> composed = vxm.compose([translate, scale])
     >>> # Result is affine: scale applied first, then translate
 
-    >>> # Compose affine with displacement field
-    >>> disp = torch.randn(64, 64, 2)
+    >>> # Compose affine with displacement field (ndim, H, W)
+    >>> disp = torch.randn(2, 64, 64)
     >>> affine = torch.tensor([[1., 0., 5.],
     ...                        [0., 1., 3.]])
     >>> composed = vxm.compose([affine, disp])
     >>> # Result is displacement field: disp applied first, then affine
 
     >>> # Compose multiple displacement fields
-    >>> disp1 = torch.randn(64, 64, 2)
-    >>> disp2 = torch.randn(64, 64, 2)
+    >>> disp1 = torch.randn(2, 64, 64)
+    >>> disp2 = torch.randn(2, 64, 64)
     >>> composed = vxm.compose([disp1, disp2])
     >>> # Result is displacement field
 
@@ -783,7 +763,7 @@ def compose(
         # Case 1: Dense warp on left, affine on right. Convert affine to disp
         if not is_affine_shape(next_trf.shape):
             if curr_is_affine:
-                curr_shape = next_trf.shape[-next_trf.shape[-1] - 1:-1]
+                curr_shape = next_trf.shape[1:]
                 if shape is not None:
                     curr_shape = shape
                 curr = affine_to_disp(
@@ -794,27 +774,20 @@ def compose(
 
             # Now both are displacement fields: warp next using curr
             # This computes: next(x + curr(x))
-            # spatial_transform expects (C, *spatial) format, but displacement is (*spatial, N)
-            ndim = next_trf.shape[-1]
-            next_trf_permuted = next_trf.permute(-1, *range(ndim))  # (*spatial, N) -> (N, *spatial)
-
             warped = spatial_transform(
-                image=next_trf_permuted,
+                image=next_trf,
                 trf=curr,
                 mode=interpolation_mode,
                 isdisp=True,
                 non_spatial_dims=(0,)
             )
-
-            # Permute back: (N, *spatial) -> (*spatial, N)
-            warped = warped.permute(*range(1, ndim + 1), 0)
             curr = curr + warped
 
         # Case 2: Affine on left, dense warp on right
         elif not curr_is_affine:
             curr = affine_to_disp(
                 next_trf,
-                shape=curr.shape[-curr.shape[-1] - 1: -1],  # Spatial shape from curr
+                shape=curr.shape[1:],
                 origin_at_center=origin_at_center,
                 warp_right=curr
             )
@@ -829,10 +802,10 @@ def compose(
 
 
 def constant_shift_field(
-        spatial_shape: Sequence[int],
-        shift_size: Union[int, float, Sequence[Union[int, float]], torch.Tensor] = 1,
-        normalize: bool = False,
-        device: Union[str, torch.device] = 'cpu',
+    spatial_shape: Sequence[int],
+    shift_size: Union[int, float, Sequence[Union[int, float]], torch.Tensor] = 1,
+    normalize: bool = False,
+    device: Union[str, torch.device] = 'cpu',
 ) -> torch.Tensor:
     """
     Generate a constant displacement field for N-dimensional space.
@@ -1014,14 +987,14 @@ def random_disp(
     Generate random displacement field using fractal noise.
 
     Creates a displacement field by generating independent fractal noise for each spatial
-    dimension and stacking them along the last dimension.
+    dimension and stacking them in channels-first format.
 
     Parameters
     ----------
     shape : Sequence[int]
         Shape of the displacement field. Interpretation depends on non_spatial_dims:
-        - non_spatial_dims=None: (*spatial,) pure spatial, output is (*spatial, ndim)
-        - non_spatial_dims=(0,): (B, *spatial), output is (B, *spatial, ndim)
+        - non_spatial_dims=None: (*spatial,) pure spatial, output is (ndim, *spatial)
+        - non_spatial_dims=(0,): (B, *spatial), output is (B, ndim, *spatial)
     scales : float, int, or Sequence[float or int], default=10
         Smoothing scale(s) for fractal noise, divided by voxsize. Interpretation depends
         on method:
@@ -1034,7 +1007,8 @@ def random_disp(
     voxsize : float or int, default=1
         Voxel size for scaling smoothing and magnitude parameters.
     meshgrid : torch.Tensor or None, default=None
-        Coordinate grid for integration. If None and integrations > 0, computed internally.
+        Coordinate grid of shape (ndim, *spatial) for integration. If None and
+        integrations > 0, computed internally.
     non_spatial_dims : Sequence of int or None, default=None
         Indices of non-spatial dimensions (only batch dimension supported for displacement):
         - None: tensor is pure spatial (*spatial,)
@@ -1049,26 +1023,26 @@ def random_disp(
     Returns
     -------
     torch.Tensor
-        Displacement field:
-        - (*spatial, ndim) if non_spatial_dims=None
-        - (B, *spatial, ndim) if non_spatial_dims=(0,)
+        Displacement field in channels-first format:
+        - (ndim, *spatial) if non_spatial_dims=None
+        - (B, ndim, *spatial) if non_spatial_dims=(0,)
 
     Examples
     --------
     >>> # Pure spatial 2D displacement field
     >>> disp = random_disp(shape=(64, 64), scales=5.0, magnitude=3.0)
     >>> disp.shape
-    torch.Size([64, 64, 2])
+    torch.Size([2, 64, 64])
 
     >>> # 3D displacement with integration
     >>> disp = random_disp(shape=(32, 32, 32), integrations=5)
     >>> disp.shape
-    torch.Size([32, 32, 32, 3])
+    torch.Size([3, 32, 32, 32])
 
     >>> # Batched displacement field
     >>> disp = random_disp(shape=(4, 64, 64), non_spatial_dims=(0,))
     >>> disp.shape
-    torch.Size([4, 64, 64, 2])
+    torch.Size([4, 2, 64, 64])
     """
     num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
         non_spatial_dims=non_spatial_dims,
@@ -1083,14 +1057,8 @@ def random_disp(
         )
 
     has_batch = num_non_spatial == 1
-    if has_batch:
-        batch_size = shape[0]
-        spatial_shape = shape[1:]
-    else:
-        batch_size = None
-        spatial_shape = shape
+    batch_size = shape[0] if has_batch else None
 
-    # Scale parameters by voxel size
     if np.isscalar(scales):
         scales = scales / voxsize
     else:
@@ -1110,12 +1078,13 @@ def random_disp(
         )
         disp_components.append(noise)
 
-    # Stack along last dimension to create displacement field
-    disp = torch.stack(disp_components, dim=-1)
+    # Stack in channels-first format: (ndim, *spatial) or (B, ndim, *spatial)
+    # For batched: stack at dim=1 (after batch), for pure spatial: stack at dim=0
+    stack_dim = 1 if has_batch else 0
+    disp = torch.stack(disp_components, dim=stack_dim)
 
     if integrations > 0:
         if not has_batch:
-            # Pure spatial: integrate directly
             disp = integrate_disp(disp, integrations, meshgrid)
         else:
             # Batched: integrate each sample
@@ -1154,8 +1123,8 @@ def random_transform(
     ----------
     shape : Sequence[int]
         Shape of the transformation field. Interpretation depends on non_spatial_dims:
-        - non_spatial_dims=None: (*spatial,) pure spatial, output is (*spatial, ndim)
-        - non_spatial_dims=(0,): (B, *spatial), output is (B, *spatial, ndim)
+        - non_spatial_dims=None: (*spatial,) pure spatial, output is (ndim, *spatial)
+        - non_spatial_dims=(0,): (B, *spatial), output is (B, ndim, *spatial)
     affine_probability : float, default=1.0
         Probability of applying an affine transformation.
     max_translation : float, default=5.0
@@ -1188,9 +1157,9 @@ def random_transform(
     Returns
     -------
     torch.Tensor
-        Displacement field:
-        - (*spatial, ndim) if non_spatial_dims=None
-        - (B, *spatial, ndim) if non_spatial_dims=(0,)
+        Displacement field in channels-first format:
+        - (ndim, *spatial) if non_spatial_dims=None
+        - (B, ndim, *spatial) if non_spatial_dims=(0,)
         Returns None if both affine and warp probabilities result in no transform.
 
     Examples
@@ -1198,7 +1167,7 @@ def random_transform(
     >>> # Pure spatial 2D transform
     >>> trf = random_transform(shape=(64, 64))
     >>> trf.shape
-    torch.Size([64, 64, 2])
+    torch.Size([2, 64, 64])
 
     >>> # 3D transform with custom parameters
     >>> trf = random_transform(
@@ -1207,12 +1176,12 @@ def random_transform(
     ...     warp_magnitude_range=(2, 5)
     ... )
     >>> trf.shape
-    torch.Size([32, 32, 32, 3])
+    torch.Size([3, 32, 32, 32])
 
     >>> # Batched transform
     >>> trf = random_transform(shape=(4, 64, 64), non_spatial_dims=(0,))
     >>> trf.shape
-    torch.Size([4, 64, 64, 2])
+    torch.Size([4, 2, 64, 64])
     """
     num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
         non_spatial_dims=non_spatial_dims,
@@ -1276,15 +1245,15 @@ def random_transform(
             else:
                 # Warp the displacement field by the affine transform and add
                 trf = trf + spatial_transform(
-                    disp.movedim(-1, 0),
+                    disp,
                     trf,
                     meshgrid=meshgrid,
                     non_spatial_dims=(0,)
-                ).movedim(0, -1)
+                )
 
         # If no transform was generated, create identity (zero displacement)
         if trf is None:
-            trf = torch.zeros(*spatial_shape, num_spatial, device=device)
+            trf = torch.zeros(num_spatial, *spatial_shape, device=device)
 
         transforms.append(trf)
 
