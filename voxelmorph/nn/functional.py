@@ -14,6 +14,9 @@ import voxelmorph as vxm
 
 __all__ = [
     "spatial_transform",
+    "disp_to_coords",
+    "coords_to_disp",
+    "integrate_disp",
     "random_disp",
     "random_transform",
 ]
@@ -83,6 +86,145 @@ def spatial_transform(
         non_spatial_dims=(0, 1),
         align_corners=True
     )
+
+
+def disp_to_coords(
+    disp: torch.Tensor,
+    meshgrid: Union[torch.Tensor, None] = None
+) -> torch.Tensor:
+    """
+    Convert displacement field to normalized coordinates for (B, ndim, *spatial) format.
+
+    Adds displacement to base meshgrid coordinates and normalizes to [-1, 1] range.
+
+    Parameters
+    ----------
+    disp : torch.Tensor
+        Displacement field with shape (B, ndim, *spatial).
+    meshgrid : torch.Tensor or None, default=None
+        Pre-computed coordinate grid of shape (ndim, *spatial). If None, computed
+        from displacement field spatial shape.
+
+    Returns
+    -------
+    torch.Tensor
+        Normalized coordinates in range [-1, 1] with shape (B, ndim, *spatial).
+
+    Examples
+    --------
+    >>> # 2D displacement field with batch
+    >>> disp = torch.randn(2, 2, 64, 64)  # (B, ndim, H, W)
+    >>> coords = disp_to_coords(disp)
+    >>> coords.shape
+    torch.Size([2, 2, 64, 64])
+
+    >>> # 3D displacement field
+    >>> disp = torch.randn(1, 3, 32, 32, 32)  # (B, ndim, D, H, W)
+    >>> coords = disp_to_coords(disp)
+    >>> coords.shape
+    torch.Size([1, 3, 32, 32, 32])
+    """
+    batch_size = disp.shape[0]
+
+    coords = torch.stack([
+        vxm.disp_to_coords(disp[i], meshgrid=meshgrid)
+        for i in range(batch_size)
+    ])
+
+    return coords
+
+
+def coords_to_disp(
+    coords: torch.Tensor,
+    meshgrid: Union[torch.Tensor, None] = None
+) -> torch.Tensor:
+    """
+    Convert normalized coordinates to displacement field for (B, ndim, *spatial) format.
+
+    This is the inverse operation of disp_to_coords().
+
+    Parameters
+    ----------
+    coords : torch.Tensor
+        Normalized coordinates in range [-1, 1] with shape (B, *spatial, ndim).
+        Channels-last format as output by grid_sample.
+    meshgrid : torch.Tensor or None, default=None
+        Pre-computed coordinate grid of shape (ndim, *spatial). If None, computed
+        from coordinate field spatial shape.
+
+    Returns
+    -------
+    torch.Tensor
+        Displacement field with shape (B, ndim, *spatial).
+
+    Examples
+    --------
+    >>> # Round-trip conversion
+    >>> import voxelmorph.nn.functional as vxf
+    >>> original_disp = torch.randn(2, 2, 64, 64)  # (B, ndim, H, W)
+    >>> coords = vxf.disp_to_coords(original_disp)
+    >>> reconstructed_disp = vxf.coords_to_disp(coords)
+    >>> torch.allclose(original_disp, reconstructed_disp, atol=1e-6)
+    True
+    """
+    batch_size = coords.shape[0]
+
+    disp = torch.stack([
+        vxm.coords_to_disp(coords[i], meshgrid=meshgrid)
+        for i in range(batch_size)
+    ])
+
+    return disp
+
+
+def integrate_disp(
+    disp: torch.Tensor,
+    steps: int,
+    meshgrid: Union[torch.Tensor, None] = None
+) -> torch.Tensor:
+    """
+    Integrate displacement field via scaling and squaring for (B, ndim, *spatial) format.
+
+    Converts a stationary velocity field into a displacement field through iterative
+    composition. The input is scaled by 1/2^steps, then composed with itself `steps` times.
+
+    Parameters
+    ----------
+    disp : torch.Tensor
+        Displacement/velocity field with shape (B, ndim, *spatial).
+    steps : int
+        Number of integration steps. If 0, returns disp unchanged.
+    meshgrid : torch.Tensor or None, default=None
+        Pre-computed coordinate grid of shape (ndim, *spatial). If None, computed
+        internally from disp spatial shape.
+
+    Returns
+    -------
+    torch.Tensor
+        Integrated displacement field with shape (B, ndim, *spatial).
+
+    Examples
+    --------
+    >>> # 2D velocity field with batch
+    >>> vel = torch.randn(2, 2, 64, 64)  # (B, ndim, H, W)
+    >>> disp = integrate_disp(vel, steps=7)
+    >>> disp.shape
+    torch.Size([2, 2, 64, 64])
+
+    >>> # 3D velocity field
+    >>> vel = torch.randn(1, 3, 32, 32, 32)  # (B, ndim, D, H, W)
+    >>> disp = integrate_disp(vel, steps=5)
+    >>> disp.shape
+    torch.Size([1, 3, 32, 32, 32])
+    """
+    batch_size = disp.shape[0]
+
+    integrated = torch.stack([
+        vxm.integrate_disp(disp[i], steps=steps, meshgrid=meshgrid)
+        for i in range(batch_size)
+    ])
+
+    return integrated
 
 
 def random_disp(

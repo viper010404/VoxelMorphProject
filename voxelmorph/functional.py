@@ -595,6 +595,10 @@ def spatial_transform(
     if mode == 'linear':
         mode = ne.utils.infer_linear_interpolation_mode(num_spatial)
 
+    # grid_sample only accepts 'bilinear', 'nearest', 'bicubic'
+    if mode == 'trilinear':
+        mode = 'bilinear'
+
     # Prepare image for grid_sample (must have B, C)
     original_dtype = None
     if not torch.is_floating_point(image):
