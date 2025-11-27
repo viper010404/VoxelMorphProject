@@ -777,3 +777,192 @@ def test_random_affine_deterministic_translation():
     # Linear part should be identity (no rotation, no scaling)
     expected_linear = torch.eye(2, dtype=torch.float32)
     assert torch.allclose(affine[:2, :2], expected_linear)
+
+
+def test_compose_two_affines():
+    """
+    Composing two affine matrices should return an affine via matrix multiplication.
+
+    For transforms [A, B], compose returns A @ B (B applied first, then A).
+    """
+    # Translation by (10, 5)
+    translate = torch.tensor([
+        [1., 0., 10.],
+        [0., 1., 5.]
+    ])
+
+    # Scale by 2x
+    scale = torch.tensor([
+        [2., 0., 0.],
+        [0., 2., 0.]
+    ])
+
+    # Compose: scale first, then translate
+    composed = vxm.compose([translate, scale])
+
+    # Result should be affine shape (2, 3)
+    assert composed.shape == (2, 3)
+    assert vxm.functional.is_affine_shape(composed.shape)
+
+    # Manual computation: translate @ scale (after making both square)
+    # scale maps x -> 2x, then translate maps 2x -> 2x + t
+    # So composed should be [[2, 0, 10], [0, 2, 5]]
+    expected = torch.tensor([
+        [2., 0., 10.],
+        [0., 2., 5.]
+    ])
+    assert torch.allclose(composed, expected)
+
+
+def test_compose_two_constant_displacements():
+    """
+    Composing two constant displacement fields should sum them in the interior.
+
+    For compose([disp1, disp2]), the math is:
+        composed(x) = disp2(x) + disp1(x + disp2(x))
+
+    When both displacements are spatially constant, disp1(x + disp2(x)) = disp1(x),
+    so composed(x) = disp1(x) + disp2(x) (simple addition).
+
+    Note: Boundary pixels may differ due to grid_sample padding_mode='zeros'.
+    We test the interior region where sampling stays within bounds.
+    """
+    shape = (16, 16)
+    ndim = len(shape)
+
+    # Constant displacement: shift by (1, 0) everywhere
+    disp1 = torch.zeros(*shape, ndim)
+    disp1[..., 0] = 1.0
+
+    # Constant displacement: shift by (0, 1) everywhere
+    disp2 = torch.zeros(*shape, ndim)
+    disp2[..., 1] = 1.0
+
+    composed = vxm.compose([disp1, disp2])
+
+    # Expected: (1, 1) everywhere in the interior
+    expected = torch.zeros(*shape, ndim)
+    expected[..., 0] = 1.0
+    expected[..., 1] = 1.0
+
+    assert composed.shape == (*shape, ndim)
+
+    # Check interior region (exclude boundary pixels affected by padding)
+    interior = composed[2:-2, 2:-2, :]
+    expected_interior = expected[2:-2, 2:-2, :]
+    assert torch.allclose(interior, expected_interior, atol=1e-5)
+
+
+def test_compose_translation_affine_with_displacement():
+    """
+    Composing [translation_affine, displacement] adds translation to displacement.
+
+    For compose([affine, disp]):
+        composed(x) = disp(x) + affine_disp(x + disp(x))
+
+    With a pure translation affine (constant displacement), the affine contribution
+    is constant everywhere, so the result is disp + translation.
+    """
+    shape = (8, 8)
+    ndim = len(shape)
+
+    # Translation affine: shift by (5, 3)
+    translation = torch.tensor([
+        [1., 0., 5.],
+        [0., 1., 3.]
+    ])
+
+    # Constant displacement field: shift by (1, 2)
+    disp = torch.zeros(*shape, ndim)
+    disp[..., 0] = 1.0
+    disp[..., 1] = 2.0
+
+    # Compose: disp first, then translation
+    composed = vxm.compose([translation, disp])
+
+    # Expected: (1+5, 2+3) = (6, 5) everywhere
+    expected = torch.zeros(*shape, ndim)
+    expected[..., 0] = 6.0
+    expected[..., 1] = 5.0
+
+    assert composed.shape == (*shape, ndim)
+    assert torch.allclose(composed, expected, atol=1e-5)
+
+
+def test_compose_displacement_with_translation_affine():
+    """
+    Composing [displacement, translation_affine] adds translation to displacement.
+
+    For compose([disp, affine]):
+        composed(x) = affine_disp(x) + disp(affine(x))
+
+    With constant displacement and pure translation:
+        composed(x) = translation + disp (since disp is constant, disp(affine(x)) = disp)
+
+    Note: Boundary pixels may differ due to grid_sample padding_mode='zeros'.
+    We test the interior region where sampling stays within bounds.
+    """
+    shape = (16, 16)
+    ndim = len(shape)
+
+    # Constant displacement field: shift by (1, 1)
+    disp = torch.zeros(*shape, ndim)
+    disp[..., 0] = 1.0
+    disp[..., 1] = 1.0
+
+    # Translation affine: shift by (2, 2)
+    translation = torch.tensor([
+        [1., 0., 2.],
+        [0., 1., 2.]
+    ])
+
+    # Compose: affine first, then disp
+    composed = vxm.compose([disp, translation])
+
+    # Expected: (2+1, 2+1) = (3, 3) everywhere in the interior
+    expected = torch.zeros(*shape, ndim)
+    expected[..., 0] = 3.0
+    expected[..., 1] = 3.0
+
+    assert composed.shape == (*shape, ndim)
+
+    # Check interior region (exclude boundary pixels affected by padding)
+    interior = composed[4:-4, 4:-4, :]
+    expected_interior = expected[4:-4, 4:-4, :]
+    assert torch.allclose(interior, expected_interior, atol=1e-5)
+
+
+def test_compose_scale_affine_with_zero_displacement():
+    """
+    Composing [scale_affine, zero_disp] should produce the affine's displacement field.
+
+    For compose([affine, disp]) with disp=0:
+        composed(x) = 0 + affine_disp(x) = affine_disp(x)
+
+    A 2x scale centered at origin maps x -> 2x, so displacement is x (moves each
+    point away from center by its distance from center).
+    """
+    shape = (5, 5)
+    ndim = len(shape)
+
+    # Scale by 2x (centered at image center due to origin_at_center=True)
+    scale_affine = torch.tensor([
+        [2., 0., 0.],
+        [0., 2., 0.]
+    ])
+
+    # Zero displacement
+    disp = torch.zeros(*shape, ndim)
+
+    composed = vxm.compose([scale_affine, disp])
+
+    # With origin_at_center=True and shape (5,5), center is at (2, 2)
+    # Scale 2x maps: x_centered -> 2 * x_centered
+    # Displacement = new_pos - old_pos = 2*x_centered - x_centered = x_centered
+    # At corners: displacement equals distance from center
+    grid = ne.volshape_to_ndgrid(size=shape, stack=True)
+    center = torch.tensor([(s - 1) / 2 for s in shape])
+    expected = grid - center  # x_centered
+
+    assert composed.shape == (*shape, ndim)
+    assert torch.allclose(composed, expected, atol=1e-5)
