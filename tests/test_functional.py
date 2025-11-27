@@ -3,6 +3,7 @@ Unit tests for the basic utility functions in voxelmorph.
 """
 
 # Standard library imports
+import pytest
 import torch
 
 import voxelmorph as vxm
@@ -25,8 +26,8 @@ def test_affine_to_disp_identity():
     # Get displacement field
     disp = vxm.affine_to_disp(affine, grid)
 
-    # output shape and dtype
-    assert disp.shape == shape + (ndim,)
+    # output shape and dtype - now (ndim, *spatial)
+    assert disp.shape == (ndim,) + shape
     assert disp.dtype == grid.dtype
 
     # all zeros
@@ -52,13 +53,13 @@ def test_affine_to_disp_translation():
     # Get displacement field
     disp = vxm.affine_to_disp(affine, grid)
 
-    # expected a field of shape (2,2,2) filled with [tx,ty]
+    # expected a field of shape (ndim, *spatial) = (2, 2, 2) filled with [tx, ty]
     expected = torch.stack(
         [
             torch.full(shape, tx, dtype=grid.dtype, device=grid.device),
             torch.full(shape, ty, dtype=grid.dtype, device=grid.device),
         ],
-        dim=-1
+        dim=0  # Stack along first dim for channels-first format
     )
 
     assert disp.shape == expected.shape
@@ -67,30 +68,41 @@ def test_affine_to_disp_translation():
 
 def test_disp_to_coords_zero_disp_2d():
     """
-    Zero displacement on a 2x3 grid should produce the normalized mesh in range [-1, 1], flipped
-    (col, row).
+    Zero displacement on a 2x3 grid should produce the normalized mesh in range [-1, 1].
+
+    Input disp is (ndim, *spatial) = (2, 2, 3).
+    Output coords is (ndim, *spatial) = (2, 2, 3) - same shape, normalized values.
     """
-    disp = torch.zeros(2, 3, 2, dtype=torch.float32)
+    # Displacement is (ndim, H, W) = (2, 2, 3)
+    disp = torch.zeros(2, 2, 3, dtype=torch.float32)
     coords = vxm.functional.disp_to_coords(disp)
 
-    # For shape=(2,3):
-    #  row indices i \isin {0, 1} -> bounded on [-1, 1] with 2 elements -> [-1, 1]
-    #  col indices j \isin {0, 1, 2} ->  bounded on [-1, 1] with 3 elements -> [-1, 0, 1]
-    expected = torch.tensor([
-        [[-1., -1.], [0., -1.], [1., -1.]],
-        [[-1., 1.], [0., 1.], [1., 1.]],
+    # Output maintains (ndim, *spatial) = (2, 2, 3)
+    assert coords.shape == (2, 2, 3)
+    assert coords.dtype == torch.float32
+
+    # For shape=(2, 3):
+    #  coords[0] (row indices): shape (2, 3), values [-1, 1] along dim 0
+    #  coords[1] (col indices): shape (2, 3), values [-1, 0, 1] along dim 1
+    expected_row = torch.tensor([
+        [-1., -1., -1.],
+        [1., 1., 1.],
+    ], dtype=torch.float32)
+    expected_col = torch.tensor([
+        [-1., 0., 1.],
+        [-1., 0., 1.],
     ], dtype=torch.float32)
 
-    assert coords.shape == (2, 3, 2)
-    assert coords.dtype == torch.float32
-    assert torch.allclose(coords, expected)
+    assert torch.allclose(coords[0], expected_row)
+    assert torch.allclose(coords[1], expected_col)
 
 
 def test_spatial_transform_none_trf_returns_input():
     """
     If trf is None, spatial_transform should return the input image.
     """
-    img = torch.rand(1, 5, 5)
+    # Image shape (B, C, H, W) for vxf wrapper
+    img = torch.rand(1, 1, 5, 5)
     out = vxf.spatial_transform(img, None)
 
     assert out.shape == img.shape
@@ -357,8 +369,8 @@ def test_affine_to_disp_scaling_2d():
 
     disp = vxm.functional.affine_to_disp(affine, meshgrid=grid, origin_at_center=False)
 
-    # Check shape
-    assert disp.shape == shape + (ndim,)
+    # Check shape - now (ndim, *spatial)
+    assert disp.shape == (ndim,) + shape
 
     # For a 2x2 grid with coordinates (0,0), (0,1), (1,0), (1,1)
     # With 2x scaling around origin:
@@ -367,9 +379,11 @@ def test_affine_to_disp_scaling_2d():
     # (1,0) -> (2,0), displacement = (2,0) - (1,0) = (1,0)
     # (1,1) -> (2,2), displacement = (2,2) - (1,1) = (1,1)
 
+    # Expected in channels-first format: (ndim, H, W)
+    # disp[0] = x-displacements, disp[1] = y-displacements
     expected_disp = torch.tensor([
-        [[0.0, 0.0], [0.0, 1.0]],
-        [[1.0, 0.0], [1.0, 1.0]],
+        [[0.0, 0.0], [1.0, 1.0]],  # x-displacements
+        [[0.0, 1.0], [0.0, 1.0]],  # y-displacements
     ], dtype=grid.dtype, device=grid.device)
 
     # Check that the displacement field matches exactly
@@ -471,25 +485,32 @@ def test_params_to_affine_complex_2d():
 def test_disp_to_coords_zero_disp():
     """
     disp_to_coords with zero displacement should produce normalized grid coordinates.
+    Output maintains (ndim, *spatial) format.
     """
-    # Create a zero displacement field
+    # Create a zero displacement field - (ndim, *spatial) = (2, 2, 2)
     disp = torch.zeros(2, 2, 2, dtype=torch.float32)
     coords = vxm.disp_to_coords(disp)
 
-    # Check shape
+    # Output maintains (ndim, *spatial) = (2, 2, 2)
     assert coords.shape == (2, 2, 2)
 
     # With zero displacement, we should get the normalized grid coordinates
-    # For a 2x2 grid, the normalized coordinates should be:
-    # [-1, -1], [1, -1]
-    # [-1,  1], [1,  1]
-    expected_coords = torch.tensor([
-        [[-1.0, -1.0], [1.0, -1.0]],
-        [[-1.0, 1.0], [1.0, 1.0]]
+    # coords[0] = row indices normalized to [-1, 1]
+    # coords[1] = col indices normalized to [-1, 1]
+    expected_row = torch.tensor([
+        [-1.0, -1.0],
+        [1.0, 1.0]
+    ], dtype=torch.float32)
+    expected_col = torch.tensor([
+        [-1.0, 1.0],
+        [-1.0, 1.0]
     ], dtype=torch.float32)
 
-    assert torch.allclose(coords, expected_coords, atol=1e-6), (
-        f"Expected {expected_coords}, got {coords}"
+    assert torch.allclose(coords[0], expected_row, atol=1e-6), (
+        f"Expected row coords {expected_row}, got {coords[0]}"
+    )
+    assert torch.allclose(coords[1], expected_col, atol=1e-6), (
+        f"Expected col coords {expected_col}, got {coords[1]}"
     )
 
 
@@ -497,7 +518,8 @@ def test_integrate_disp_zero_steps():
     """
     integrate_disp with zero steps should return the original displacement.
     """
-    disp = torch.randn(2, 3, 2, dtype=torch.float32)
+    # Displacement is now (ndim, *spatial) = (2, 2, 3)
+    disp = torch.randn(2, 2, 3, dtype=torch.float32)
     integrated = vxm.functional.integrate_disp(disp, steps=0)
 
     assert torch.allclose(integrated, disp)
@@ -507,7 +529,8 @@ def test_integrate_disp_single_step():
     """
     integrate_disp with one step should apply spatial transform once.
     """
-    disp = torch.randn(2, 3, 2, dtype=torch.float32)
+    # Displacement is now (ndim, *spatial) = (2, 2, 3)
+    disp = torch.randn(2, 2, 3, dtype=torch.float32)
     integrated = vxm.functional.integrate_disp(disp, steps=1)
 
     # Should have same shape
@@ -521,7 +544,7 @@ def test_random_transform():
     random_transform should generate valid transforms.
 
     Note: vxf.random_transform expects (B, C, *spatial) format and returns
-    (B, *spatial, ndim) displacement fields.
+    (B, ndim, *spatial) displacement fields - channels-first format.
     """
     # Shape in (B, C, H, W) format
     shape = (1, 1, 3, 3)
@@ -536,8 +559,8 @@ def test_random_transform():
     )
 
     assert trf is not None
-    # Output shape is (B, *spatial, ndim)
-    assert trf.shape == (shape[0],) + spatial_shape + (ndim,)
+    # Output shape is (B, ndim, *spatial) - channels-first
+    assert trf.shape == (shape[0], ndim) + spatial_shape
 
     # Test warp-only transform
     trf = vxf.random_transform(
@@ -547,7 +570,7 @@ def test_random_transform():
     )
 
     assert trf is not None
-    assert trf.shape == (shape[0],) + spatial_shape + (ndim,)
+    assert trf.shape == (shape[0], ndim) + spatial_shape
 
 
 def test_affine_to_disp_large_translation():
@@ -566,11 +589,11 @@ def test_affine_to_disp_large_translation():
 
     disp = vxm.functional.affine_to_disp(affine, grid)
 
-    # Check shape
-    assert disp.shape == shape + (ndim,)
+    # Check shape - now (ndim, *spatial)
+    assert disp.shape == (ndim,) + shape
     # All displacements should be the translation value
     expected_disp = torch.full(
-        shape + (ndim,),
+        (ndim,) + shape,
         large_translation,
         dtype=grid.dtype,
         device=grid.device
@@ -598,15 +621,16 @@ def test_affine_to_disp_origin_at_center_scaling():
     disp_centered = vxm.functional.affine_to_disp(affine, shape=shape, origin_at_center=True)
 
     # Center point (1,1) should have zero displacement
-    assert torch.allclose(disp_centered[1, 1], torch.zeros(2), atol=1e-6), \
-        f"Center should be fixed, got displacement {disp_centered[1, 1]}"
+    # With (ndim, *spatial) format, access as disp[:, 1, 1] to get displacement vector
+    assert torch.allclose(disp_centered[:, 1, 1], torch.zeros(2), atol=1e-6), \
+        f"Center should be fixed, got displacement {disp_centered[:, 1, 1]}"
 
     # Test with origin_at_center=False (scale around corner)
     disp_corner = vxm.functional.affine_to_disp(affine, shape=shape, origin_at_center=False)
 
     # Corner (0,0) should have zero displacement
-    assert torch.allclose(disp_corner[0, 0], torch.zeros(2), atol=1e-6), \
-        f"Corner should be fixed, got displacement {disp_corner[0, 0]}"
+    assert torch.allclose(disp_corner[:, 0, 0], torch.zeros(2), atol=1e-6), \
+        f"Corner should be fixed, got displacement {disp_corner[:, 0, 0]}"
 
     # The two displacement fields should be different
     assert not torch.allclose(disp_centered, disp_corner), \
@@ -631,15 +655,16 @@ def test_affine_to_disp_origin_at_center_rotation():
     disp_centered = vxm.functional.affine_to_disp(affine, shape=shape, origin_at_center=True)
 
     # Center point (1,1) should have zero displacement (stays in place)
-    assert torch.allclose(disp_centered[1, 1], torch.zeros(2), atol=1e-6), \
-        f"Center should be fixed during rotation, got {disp_centered[1, 1]}"
+    # With (ndim, *spatial) format, access as disp[:, 1, 1] to get displacement vector
+    assert torch.allclose(disp_centered[:, 1, 1], torch.zeros(2), atol=1e-6), \
+        f"Center should be fixed during rotation, got {disp_centered[:, 1, 1]}"
 
     # Test with origin_at_center=False (rotate around corner)
     disp_corner = vxm.functional.affine_to_disp(affine, shape=shape, origin_at_center=False)
 
     # Corner (0,0) should have zero displacement
-    assert torch.allclose(disp_corner[0, 0], torch.zeros(2), atol=1e-6), \
-        f"Corner should be fixed during rotation, got {disp_corner[0, 0]}"
+    assert torch.allclose(disp_corner[:, 0, 0], torch.zeros(2), atol=1e-6), \
+        f"Corner should be fixed during rotation, got {disp_corner[:, 0, 0]}"
 
     # The two should be dramatically different for rotation
     assert not torch.allclose(disp_centered, disp_corner), \
@@ -686,27 +711,30 @@ def test_params_to_affine_analytical():
         f"Point transformation failed: expected {expected_result}, got {result}"
 
 
-def test_disp_to_coords_axis_flip():
+def test_disp_to_coords_with_displacement():
     """
-    Test that disp_to_coords correctly flips the last axis to match PyTorch convention.
+    Test that disp_to_coords correctly adds displacement to meshgrid then normalizes.
+    Output maintains (ndim, *spatial) format.
     """
-    # Create a simple displacement field
+    # Create a simple displacement field - (ndim, H, W) = (2, 2, 2)
     disp = torch.zeros(2, 2, 2, dtype=torch.float32)
 
-    # Add some displacement
-    disp[0, 0, 0] = 1.0  # Move first pixel
-    disp[1, 1, 1] = 2.0  # Move second pixel
+    # Add some displacement to specific locations
+    disp[0, 0, 0] = 1.0  # row-displacement at (0, 0)
+    disp[1, 1, 1] = 2.0  # col-displacement at (1, 1)
 
     # Convert to coordinates
     coords = vxm.disp_to_coords(disp)
 
-    # The coordinates should be flipped compared to the displacement
-    # This verifies that the flip(-1) operation is working correctly
+    # Output maintains (ndim, *spatial) = (2, 2, 2)
     assert coords.shape == (2, 2, 2)
 
-    # Check that the flip operation was applied
-    # The last axis should be flipped from [y, x] to [x, y]
-    assert coords[0, 0, 0] != coords[0, 0, 1]  # Should be different after flip
+    # Calculation: coords = (meshgrid + disp) * 2 / (size - 1) - 1
+    # For 2x2 grid: formula is (index + disp) * 2 - 1
+    # meshgrid[0, 0, 0] = 0, disp[0, 0, 0] = 1 -> (0 + 1) * 2 - 1 = 1
+    # meshgrid[1, 1, 1] = 1, disp[1, 1, 1] = 2 -> (1 + 2) * 2 - 1 = 5
+    assert torch.isclose(coords[0, 0, 0], torch.tensor(1.0), atol=1e-6)
+    assert torch.isclose(coords[1, 1, 1], torch.tensor(5.0), atol=1e-6)
 
 
 def test_random_affine_shape_2d():
@@ -831,25 +859,26 @@ def test_compose_two_constant_displacements():
     ndim = len(shape)
 
     # Constant displacement: shift by (1, 0) everywhere
-    disp1 = torch.zeros(*shape, ndim)
-    disp1[..., 0] = 1.0
+    # Now (ndim, *spatial) = (2, 16, 16)
+    disp1 = torch.zeros(ndim, *shape)
+    disp1[0, ...] = 1.0  # x-displacement
 
     # Constant displacement: shift by (0, 1) everywhere
-    disp2 = torch.zeros(*shape, ndim)
-    disp2[..., 1] = 1.0
+    disp2 = torch.zeros(ndim, *shape)
+    disp2[1, ...] = 1.0  # y-displacement
 
     composed = vxm.compose([disp1, disp2])
 
     # Expected: (1, 1) everywhere in the interior
-    expected = torch.zeros(*shape, ndim)
-    expected[..., 0] = 1.0
-    expected[..., 1] = 1.0
+    expected = torch.zeros(ndim, *shape)
+    expected[0, ...] = 1.0
+    expected[1, ...] = 1.0
 
-    assert composed.shape == (*shape, ndim)
+    assert composed.shape == (ndim, *shape)
 
     # Check interior region (exclude boundary pixels affected by padding)
-    interior = composed[2:-2, 2:-2, :]
-    expected_interior = expected[2:-2, 2:-2, :]
+    interior = composed[:, 2:-2, 2:-2]
+    expected_interior = expected[:, 2:-2, 2:-2]
     assert torch.allclose(interior, expected_interior, atol=1e-5)
 
 
@@ -873,19 +902,20 @@ def test_compose_translation_affine_with_displacement():
     ])
 
     # Constant displacement field: shift by (1, 2)
-    disp = torch.zeros(*shape, ndim)
-    disp[..., 0] = 1.0
-    disp[..., 1] = 2.0
+    # Now (ndim, *spatial) = (2, 8, 8)
+    disp = torch.zeros(ndim, *shape)
+    disp[0, ...] = 1.0  # x-displacement
+    disp[1, ...] = 2.0  # y-displacement
 
     # Compose: disp first, then translation
     composed = vxm.compose([translation, disp])
 
     # Expected: (1+5, 2+3) = (6, 5) everywhere
-    expected = torch.zeros(*shape, ndim)
-    expected[..., 0] = 6.0
-    expected[..., 1] = 5.0
+    expected = torch.zeros(ndim, *shape)
+    expected[0, ...] = 6.0
+    expected[1, ...] = 5.0
 
-    assert composed.shape == (*shape, ndim)
+    assert composed.shape == (ndim, *shape)
     assert torch.allclose(composed, expected, atol=1e-5)
 
 
@@ -906,9 +936,10 @@ def test_compose_displacement_with_translation_affine():
     ndim = len(shape)
 
     # Constant displacement field: shift by (1, 1)
-    disp = torch.zeros(*shape, ndim)
-    disp[..., 0] = 1.0
-    disp[..., 1] = 1.0
+    # Now (ndim, *spatial) = (2, 16, 16)
+    disp = torch.zeros(ndim, *shape)
+    disp[0, ...] = 1.0  # x-displacement
+    disp[1, ...] = 1.0  # y-displacement
 
     # Translation affine: shift by (2, 2)
     translation = torch.tensor([
@@ -920,15 +951,15 @@ def test_compose_displacement_with_translation_affine():
     composed = vxm.compose([disp, translation])
 
     # Expected: (2+1, 2+1) = (3, 3) everywhere in the interior
-    expected = torch.zeros(*shape, ndim)
-    expected[..., 0] = 3.0
-    expected[..., 1] = 3.0
+    expected = torch.zeros(ndim, *shape)
+    expected[0, ...] = 3.0
+    expected[1, ...] = 3.0
 
-    assert composed.shape == (*shape, ndim)
+    assert composed.shape == (ndim, *shape)
 
     # Check interior region (exclude boundary pixels affected by padding)
-    interior = composed[4:-4, 4:-4, :]
-    expected_interior = expected[4:-4, 4:-4, :]
+    interior = composed[:, 4:-4, 4:-4]
+    expected_interior = expected[:, 4:-4, 4:-4]
     assert torch.allclose(interior, expected_interior, atol=1e-5)
 
 
@@ -951,8 +982,8 @@ def test_compose_scale_affine_with_zero_displacement():
         [0., 2., 0.]
     ])
 
-    # Zero displacement
-    disp = torch.zeros(*shape, ndim)
+    # Zero displacement - now (ndim, *spatial)
+    disp = torch.zeros(ndim, *shape)
 
     composed = vxm.compose([scale_affine, disp])
 
@@ -960,9 +991,36 @@ def test_compose_scale_affine_with_zero_displacement():
     # Scale 2x maps: x_centered -> 2 * x_centered
     # Displacement = new_pos - old_pos = 2*x_centered - x_centered = x_centered
     # At corners: displacement equals distance from center
+    # Grid is now (ndim, *spatial)
     grid = ne.volshape_to_ndgrid(size=shape, stack=True)
-    center = torch.tensor([(s - 1) / 2 for s in shape])
+    center = torch.tensor([(s - 1) / 2 for s in shape]).view(ndim, *([1] * ndim))
     expected = grid - center  # x_centered
 
-    assert composed.shape == (*shape, ndim)
+    assert composed.shape == (ndim, *shape)
     assert torch.allclose(composed, expected, atol=1e-5)
+
+
+@pytest.mark.parametrize("shape,expected", [
+    # Valid 2d affine shapes
+    ((2, 3), True),   # compact 2d: (N, N+1)
+    ((3, 3), True),   # square 2d: (N+1, N+1)
+    # Valid 3d affine shapes
+    ((3, 4), True),   # compact 3d: (N, N+1)
+    ((4, 4), True),   # square 3d: (N+1, N+1)
+    # Valid with batch dimensions
+    ((5, 2, 3), True),        # batched compact 2d
+    ((2, 10, 4, 4), True),    # multi-batch square 3d
+    # Invalid: wrong column count (cols must be 3 or 4 for N=2 or N=3)
+    ((2, 2), False),   # cols=2 -> N=1, not supported
+    ((3, 5), False),   # cols=5 -> N=4, not supported
+    ((2, 4), False),   # cols=4 -> N=3, but rows=2 != 3 or 4
+    # Invalid: wrong row count
+    ((1, 3), False),   # cols=3 -> N=2, but rows=1 != 2 or 3
+    ((5, 4), False),   # cols=4 -> N=3, but rows=5 != 3 or 4
+    # Invalid: too few dimensions
+    ((3,), False),
+    ((), False),
+])
+def test_is_affine_shape(shape, expected):
+    """is_affine_shape should correctly identify valid affine matrix shapes."""
+    assert vxm.is_affine_shape(shape) == expected
