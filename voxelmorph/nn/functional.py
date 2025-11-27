@@ -11,6 +11,7 @@ import torch
 
 # Local imports
 import voxelmorph as vxm
+import neurite.nn.functional as nef
 
 __all__ = [
     "spatial_transform",
@@ -135,7 +136,7 @@ def upsample_noise(
 
 def smooth_gaussian(
     shape: Sequence[int],
-    scale: float,
+    sigma: float,
     magnitude: float = 1.0,
     device: Union[torch.device, None] = None,
 ) -> torch.Tensor:
@@ -146,9 +147,9 @@ def smooth_gaussian(
     ----------
     shape : Sequence[int]
         Desired shape of output tensor in (B, C, *spatial). Must have at least 3 dimensions
-        (batch, channel, and spatial). Examples: (1, 1, 64, 64) for 2D, (2, 3, 64, 64, 64) for 3D.
-    scale : float
-        Spatial smoothing scale in voxel coordinates.
+        (batch, channel, and spatial). Examples: (1, 1, 64, 64) for 2d, (2, 3, 64, 64, 64) for 3d.
+    sigma : float
+        Standard deviation of the Gaussian kernel for smoothing.
     magnitude : float, default=1.0
         Standard deviation of the noise after normalization.
     device : torch.device or None, default=None
@@ -161,21 +162,20 @@ def smooth_gaussian(
 
     Examples
     --------
-    >>> # Generate 2D noise field
-    >>> noise_2d = smooth_gaussian(shape=(1, 1, 64, 64), scale=3.0)
+    >>> # Generate 2d noise field
+    >>> noise_2d = smooth_gaussian(shape=(1, 1, 64, 64), sigma=3.0)
     >>> noise_2d.shape
     torch.Size([1, 1, 64, 64])
 
-    >>> # Generate 3D noise field with multiple channels
-    >>> noise_3d = smooth_gaussian(shape=(2, 3, 32, 32, 32), scale=5.0, magnitude=2.0)
+    >>> # Generate 3d noise field with multiple channels
+    >>> noise_3d = smooth_gaussian(shape=(2, 3, 32, 32, 32), sigma=5.0, magnitude=2.0)
     >>> noise_3d.shape
     torch.Size([2, 3, 32, 32, 32])
     """
-    return vxm.smooth_gaussian(
+    return nef.smooth_gaussian(
         shape=shape,
-        sigma=scale,
+        sigma=sigma,
         magnitude=magnitude,
-        non_spatial_dims=(0, 1),
         device=device,
     )
 
