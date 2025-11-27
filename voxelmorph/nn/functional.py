@@ -14,7 +14,6 @@ import voxelmorph as vxm
 
 __all__ = [
     "spatial_transform",
-    "fractal_noise",
     "random_disp",
     "random_transform",
 ]
@@ -82,73 +81,6 @@ def spatial_transform(
         origin_at_center=origin_at_center,
         non_spatial_dims=(0, 1),
         align_corners=True
-    )
-
-
-def fractal_noise(
-    shape: Sequence[int],
-    scales: Union[float, int, List[float], None] = None,
-    magnitude: float = 1.0,
-    weights: Union[List[float], None] = None,
-    device: Union[torch.device, None] = None,
-    method: Literal['blur', 'upsample'] = 'blur'
-) -> torch.Tensor:
-    """
-    Generate Fractal noise in (B, C, *spatial) format.
-
-    Parameters
-    ----------
-    shape : Sequence[int]
-        Desired shape of output tensor in (B, C, *spatial) format. Must have at least 3
-        dimensions (batch, channel, and spatial). Examples: (1, 1, 64, 64) for 2D,
-        (2, 3, 64, 64, 64) for 3D.
-    scales : float, int, List[float], or None, default=None
-        Smoothing scale(s) for each octave. Interpretation depends on method:
-        - method='blur': sigma values for Gaussian smoothing
-        - method='upsample': downsampling factors for upsampled noise
-        If None, defaults to powers of 2 up to max spatial dimension.
-        If scalar, reduces to single-scale noise generation.
-    magnitude : float, default=1.0
-        Standard deviation of the final normalized noise.
-    weights : List[float] or None, default=None
-        Weight for each scale. If None, uses linearly increasing weights
-        [1, 2, 3, ...]. Length must match scales if both are lists.
-    device : torch.device or None, default=None
-        Device for tensor allocation. If None, defaults to CPU.
-    method : {'blur', 'upsample'}, default='blur'
-        Noise generation method:
-        - 'blur': Generate noise at full spatial res and apply Gaussian smoothing (higher quality)
-        - 'upsample': Generate coarse noise and upsample (faster, lower memory)
-
-    Returns
-    -------
-    torch.Tensor
-        Fractal noise with shape (B, C, *spatial).
-
-    Examples
-    --------
-    >>> # Generate 2D Fractal noise with default scales
-    >>> noise_2d = fractal_noise(shape=(1, 1, 64, 64))
-    >>> noise_2d.shape
-    torch.Size([1, 1, 64, 64])
-
-    >>> # Generate 3D Fractal noise with custom scales
-    >>> noise_3d = fractal_noise(shape=(1, 1, 32, 32, 32), scales=[2.0, 4.0, 8.0], magnitude=2.0)
-
-    >>> # Single-scale Fractal (equivalent to smooth_gaussian)
-    >>> noise_single = fractal_noise(shape=(1, 1, 64, 64), scales=5.0)
-
-    >>> # Using upsample method for faster generation
-    >>> noise_fast = fractal_noise(shape=(1, 1, 128, 128), method='upsample', scales=[4, 8, 16])
-    """
-    return vxm.fractal_noise(
-        shape=shape,
-        scales=scales,
-        magnitude=magnitude,
-        weights=weights,
-        non_spatial_dims=(0, 1),
-        device=device,
-        method=method,
     )
 
 
