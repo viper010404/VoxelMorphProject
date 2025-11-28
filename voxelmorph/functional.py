@@ -606,8 +606,10 @@ def spatial_transform(
             original_dtype = image.dtype
         image = image.type(torch.float32)
 
-    # Add dimensions to reach (B, C, *spatial) format
-    image, dims_added = ne.functional.pad_batch_channel(image, non_spatial_dims)
+    # Add batch/channel dimensions to reach (B, C, *spatial) format
+    dims_added = 2 - num_non_spatial
+    for _ in range(dims_added):
+        image = image.unsqueeze(0)
 
     # Prepare coordinates for grid_sample (requires batch dimension)
     # After conversion, trf is (*spatial, ndim) or (B, *spatial, ndim)
@@ -620,8 +622,9 @@ def spatial_transform(
         image, trf, align_corners=align_corners, mode=mode, padding_mode=padding_mode
     )
 
-    # Restore original format
-    transformed = ne.functional.unpad_batch_channel(transformed, dims_added)
+    # Restore original format by removing added dimensions
+    for _ in range(dims_added):
+        transformed = transformed.squeeze(0)
     if original_dtype is not None:
         transformed = transformed.type(original_dtype)
 
