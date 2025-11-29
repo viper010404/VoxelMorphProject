@@ -87,6 +87,7 @@ class VxmPairwise(nn.Module):
         flow_initializer: float = 1e-5,
         integration_steps: int = 5,
         resize_integrated_fields: bool = False,
+        downsample_first: bool = False,
         device: str = "cpu",
     ):
 
@@ -123,6 +124,10 @@ class VxmPairwise(nn.Module):
         integration_steps : int, optional
             Number of scaling and squaring steps for integrating the flow field.
             Default is 5.
+        downsample_first : bool, default=False
+            If True, downsample the input before any convolutions and upsample after the
+            upsampling path (but before the output layer). This avoids convolutions at the full
+            input resolution, reducing memory and compute for high-resolution inputs.
         device : str, optional
             Device identifier (e.g., 'cpu' or 'cuda') to place/run the model on.
         """
@@ -140,11 +145,15 @@ class VxmPairwise(nn.Module):
         # Set derived attrs
         self._init_flow_layer(ndim, self.out_channels, flow_initializer)
         self.model = ne.nn.models.BasicUNet(
-            ndim=ndim, in_channels=(source_channels + target_channels),
+            ndim=ndim,
+            in_channels=(source_channels + target_channels),
             out_channels=self.out_channels,
             nb_features=nb_features,
-            normalizations=normalizations, activations=activations, order=order,
-            final_activation=final_activation
+            normalizations=normalizations,
+            activations=activations,
+            order=order,
+            final_activation=final_activation,
+            downsample_first=downsample_first,
         )
 
         # Initialize the velocity field integrator with spatial shape
