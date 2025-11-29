@@ -34,8 +34,6 @@ class VxmPairwise(nn.Module):
     spatial_shape : tuple[int]
         The expected shape of the `moving_tensor` input to the forward method of this class.
         without batch or channel dimensions. Used to initialize the `VecInt` integrator.
-    out_channels : int
-        Number of output channels in the displacement field.
     *args : list
         Additional positional arguments for the `BasicUNet` constructor.
     nb_features : List[int], optional
@@ -78,7 +76,7 @@ class VxmPairwise(nn.Module):
         ndim: int,
         source_channels: int,
         target_channels: int,
-        spatial_shape: Tuple[int, ...],
+        spatial_shape: Union[Sequence[int], None],
         nb_features: Sequence[int] = (16, 16, 16, 16, 16),
         normalizations: Union[List[Union[Callable, str]], Callable, str, None] = None,
         activations: Union[List[Union[Callable, str]], Callable, str, None] = nn.ReLU,
@@ -139,14 +137,13 @@ class VxmPairwise(nn.Module):
         self.resize_integrated_fields = resize_integrated_fields
         self.device = device
         self.spatial_shape = spatial_shape
-        self.out_channels = ndim
 
         # Set derived attrs
-        self._init_flow_layer(ndim, self.out_channels, flow_initializer)
+        self._init_flow_layer(ndim, ndim, flow_initializer)
         self.model = ne.nn.models.BasicUNet(
             ndim=ndim,
             in_channels=(source_channels + target_channels),
-            out_channels=self.out_channels,
+            out_channels=ndim,
             nb_features=nb_features,
             normalizations=normalizations,
             activations=activations,
