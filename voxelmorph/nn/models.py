@@ -31,9 +31,6 @@ class VxmPairwise(nn.Module):
         Number of channels in the source image.
     target_channels : int
         Number of channels in the target image.
-    spatial_shape : tuple[int]
-        The expected shape of the `moving_tensor` input to the forward method of this class.
-        without batch or channel dimensions. Used to initialize the `VecInt` integrator.
     *args : list
         Additional positional arguments for the `BasicUNet` constructor.
     nb_features : List[int], optional
@@ -76,7 +73,6 @@ class VxmPairwise(nn.Module):
         ndim: int,
         source_channels: int,
         target_channels: int,
-        spatial_shape: Union[Sequence[int], None],
         nb_features: Sequence[int] = (16, 16, 16, 16, 16),
         normalizations: Union[List[Union[Callable, str]], Callable, str, None] = None,
         activations: Union[List[Union[Callable, str]], Callable, str, None] = nn.ReLU,
@@ -99,9 +95,6 @@ class VxmPairwise(nn.Module):
             Number of channels in the `source_tensor` input to the forward method of this class.
         target_channels : int
             Number of channels in the `target_tensor` input to the forward method of this class.
-        spatial_shape : tuple[int]
-            The expected shape of the `moving_tensor` input to the forward method of this class.
-            without batch or channel dimensions. Used to initialize the `VecInt` integrator.
         nb_features : List[int]
             Number of features at each level of the unet. Must be a list of
             positive integers.
@@ -136,7 +129,6 @@ class VxmPairwise(nn.Module):
         self.integration_steps = integration_steps
         self.resize_integrated_fields = resize_integrated_fields
         self.device = device
-        self.spatial_shape = spatial_shape
 
         # Set derived attrs
         self._init_flow_layer(ndim, ndim, flow_initializer)
@@ -152,14 +144,14 @@ class VxmPairwise(nn.Module):
             downsample_first=downsample_first,
         )
 
-        # Initialize the velocity field integrator with spatial shape
+        # Initialize the velocity field integrator
         if self.integration_steps > 0:
             self.velocity_field_integrator = vxm.nn.modules.IntegrateVelocityField(
-                shape=self.spatial_shape, steps=self.integration_steps, device=self.device
+                steps=self.integration_steps
             )
 
-        # Initialize the spatial transformer with spatial shape
-        self.spatial_transformer = vxm.nn.modules.SpatialTransformer(device=self.device)
+        # Initialize the spatial transformer
+        self.spatial_transformer = vxm.nn.modules.SpatialTransformer()
 
     def forward(
         self,
