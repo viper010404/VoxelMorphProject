@@ -116,7 +116,6 @@ class SpatialTransformer(nn.Module):
             # Extract single batch element
             img_b = moving_image[b]  # (C, *spatial)
             disp_b = deformation_field[b]  # (ndim, *spatial)
-            grid_shape = img_b.shape
 
             # Allocate or reallocate meshgrid if spatial shape changed
             spatial_shape = img_b.shape[1:]
