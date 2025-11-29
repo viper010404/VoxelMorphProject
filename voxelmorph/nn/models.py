@@ -81,8 +81,8 @@ class VxmPairwise(nn.Module):
         flow_initializer: float = 1e-5,
         integration_steps: int = 5,
         resize_integrated_fields: bool = False,
-        downsample_first: bool = False,
         device: str = "cpu",
+        **unet_kwargs,
     ):
         """
         Initialize the `VxmPairwise`.
@@ -114,12 +114,10 @@ class VxmPairwise(nn.Module):
         integration_steps : int, optional
             Number of scaling and squaring steps for integrating the flow field.
             Default is 5.
-        downsample_first : bool, default=False
-            If True, downsample the input before any convolutions and upsample after the
-            upsampling path (but before the output layer). This avoids convolutions at the full
-            input resolution, reducing memory and compute for high-resolution inputs.
         device : str, optional
             Device identifier (e.g., 'cpu' or 'cuda') to place/run the model on.
+        **unet_kwargs : dict
+            Additional keyword arguments passed to `neurite.nn.models.BasicUNet`.
         """
 
         # Initialize the Module
@@ -141,7 +139,7 @@ class VxmPairwise(nn.Module):
             activations=activations,
             order=order,
             final_activation=final_activation,
-            downsample_first=downsample_first,
+            **unet_kwargs,
         )
 
         # Initialize the velocity field integrator
