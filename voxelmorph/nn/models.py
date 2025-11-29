@@ -90,7 +90,6 @@ class VxmPairwise(nn.Module):
         downsample_first: bool = False,
         device: str = "cpu",
     ):
-
         """
         Initialize the `VxmPairwise`.
 

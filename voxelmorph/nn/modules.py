@@ -116,6 +116,17 @@ class SpatialTransformer(nn.Module):
             # Extract single batch element
             img_b = moving_image[b]  # (C, *spatial)
             disp_b = deformation_field[b]  # (ndim, *spatial)
+            grid_shape = img_b.shape
+
+            # Allocate or reallocate meshgrid if spatial shape changed
+            spatial_shape = img_b.shape[1:]
+            if not hasattr(self, 'meshgrid') or self.meshgrid.shape[1:] != spatial_shape:
+                self.meshgrid = ne.volshape_to_ndgrid(
+                    size=spatial_shape,
+                    device=img_b.device,
+                    dtype=img_b.dtype,
+                    stack=True
+                )
 
             # Apply spatial transform
             warped_b = vxm.functional.spatial_transform(
@@ -296,7 +307,6 @@ class ResizeDisplacementField(nn.Module):
         torch.Tensor
             Resized displacement field.
         """
-
         # Use the scale factor to resize the displacement field
         resized_disp = nnf.interpolate(
             disp * self.scale_factor,  # Scale the magnitudes of the displacement field
