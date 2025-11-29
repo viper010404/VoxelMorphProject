@@ -186,7 +186,6 @@ def main():
         ndim=3,
         source_channels=1,
         target_channels=1,
-        spatial_shape=(160, 192, 224),
         nb_features=[16, 16, 16, 16, 16],
         integration_steps=0,
     ).to(device)
