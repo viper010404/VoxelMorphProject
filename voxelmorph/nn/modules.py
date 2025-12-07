@@ -93,19 +93,12 @@ class SpatialTransformer(nn.Module):
         - Processes each batch element independently since vxm.functional.spatial_transform
           expects displacement fields without batch dimension
         """
-        # Validate dimensions
-        if moving_image.dim() < 4:
-            raise ValueError(
-                f"Expected moving_image to have at least 4 dimensions (B, C, *spatial), "
-                f"got {moving_image.dim()} dimensions with shape {moving_image.shape}"
-            )
-
-        if deformation_field.dim() != moving_image.dim():
-            raise ValueError(
-                f"Expected moving_image and deformation_field to have the same number of "
-                f"dimensions, got moving_image.dim()={moving_image.dim()}, deformation_field.dim()"
-                f"={deformation_field.dim()}"
-            )
+        assert moving_image.dim() >= 4, (
+            f"moving_image must have >=4 dims (B,C,*spatial), got {moving_image.shape}"
+        )
+        assert deformation_field.dim() == moving_image.dim(), (
+            f"dim mismatch: moving={moving_image.dim()}, field={deformation_field.dim()}"
+        )
 
         # Allocate or reallocate meshgrid if spatial shape changed
         spatial_shape = moving_image.shape[2:]

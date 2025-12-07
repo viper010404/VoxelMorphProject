@@ -383,7 +383,7 @@ def test_spatial_transformer_error_handling():
     img_wrong_dims = torch.randn(1, 3, 3)  # Missing channel dimension
     disp_wrong_dims = torch.zeros(1, 2, 3, 3)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(AssertionError):
         transformer(img_wrong_dims, disp_wrong_dims)
 
     # Test with mismatched dimensions
