@@ -24,12 +24,10 @@ def vxm_model():
     """
     Create a VxmPairwise model for testing with standard 3D configuration.
     """
-
     model = vxm.nn.models.VxmPairwise(
         ndim=3,
         source_channels=1,
         target_channels=1,
-        spatial_shape=(32, 32, 32),
         device="cpu",
         integration_steps=0,
     )
@@ -41,12 +39,10 @@ def vxm_model_diffeomorphic():
     """
     Create a VxmPairwise model with diffeomorphic registration (integration_steps > 0).
     """
-
     model = vxm.nn.models.VxmPairwise(
         ndim=3,
         source_channels=1,
         target_channels=1,
-        spatial_shape=(32, 32, 32),
         integration_steps=7,
         device="cpu"
     )
