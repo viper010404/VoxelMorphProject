@@ -107,42 +107,26 @@ class SpatialTransformer(nn.Module):
                 f"={deformation_field.dim()}"
             )
 
-        batch_size = moving_image.shape[0]
-
-        # Process each batch element independently
-        # vxm.functional.spatial_transform expects disp as (ndim, *spatial) without batch
-        warped_batch = []
-        for b in range(batch_size):
-            # Extract single batch element
-            img_b = moving_image[b]  # (C, *spatial)
-            disp_b = deformation_field[b]  # (ndim, *spatial)
-
-            # Allocate or reallocate meshgrid if spatial shape changed
-            spatial_shape = img_b.shape[1:]
-            if not hasattr(self, 'meshgrid') or self.meshgrid.shape[1:] != spatial_shape:
-                self.meshgrid = ne.volshape_to_ndgrid(
-                    size=spatial_shape,
-                    device=img_b.device,
-                    dtype=img_b.dtype,
-                    stack=True
-                )
-
-            # Apply spatial transform
-            warped_b = vxm.functional.spatial_transform(
-                image=img_b,
-                trf=disp_b,
-                mode=self.interpolation_mode,
-                isdisp=True,
-                meshgrid=None,
-                origin_at_center=True,
-                non_spatial_dims=(0,),  # First dim is channel
-                align_corners=self.align_corners,
-                padding_mode='zeros'
+        # Allocate or reallocate meshgrid if spatial shape changed
+        spatial_shape = moving_image.shape[2:]
+        if not hasattr(self, 'meshgrid') or self.meshgrid.shape[1:] != spatial_shape:
+            self.meshgrid = ne.volshape_to_ndgrid(
+                size=spatial_shape,
+                device=moving_image.device,
+                dtype=moving_image.dtype,
+                stack=True
             )
-            warped_batch.append(warped_b)
 
-        # Stack back to (B, C, *spatial)
-        return torch.stack(warped_batch, dim=0)
+        return vxm.functional.spatial_transform(
+            image=moving_image,
+            trf=deformation_field,
+            mode=self.interpolation_mode,
+            isdisp=True,
+            meshgrid=self.meshgrid,
+            non_spatial_dims=(0, 1),
+            align_corners=self.align_corners,
+            padding_mode='zeros'
+        )
 
 
 class IntegrateVelocityField(nn.Module):
