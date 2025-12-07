@@ -31,19 +31,12 @@ class VxmPairwise(nn.Module):
         Number of channels in the source image.
     target_channels : int
         Number of channels in the target image.
-    *args : list
-        Additional positional arguments for the `BasicUNet` constructor.
     nb_features : List[int], optional
         List of integers specifying the number of features in each
         level of the UNet architecture. Default is `[16, 16, 16, 16, 16]`.
-    normalizations : Union[List[str], str], optional
-        Normalization layers for the UNet. Can be a list of normalization
-        types or a single normalization type. Default is `None`.
     activations : Union[List[str], str], optional
         Activation functions for the UNet layers. Can be a list of
         activation functions or a single function. Default is `nn.ReLU`.
-    order : str, optional
-        The order of operations in each UNet block. Default is `'ca'`.
     final_activation : Union[str, nn.Module, None], optional
         The activation applied to the final output of the network. Default is `None`.
     flow_initializer : float, optional
@@ -51,7 +44,7 @@ class VxmPairwise(nn.Module):
         normal distribution (mean=0). Default is `1e-5`.
     integration_steps : int, optional
         Number of steps to take in integrating the flow field. Default is 5.
-    **kwargs : dict
+    unet_kwargs : dict or None, optional
         Additional keyword arguments passed to the `BasicUNet` constructor.
 
     Attributes
@@ -74,15 +67,13 @@ class VxmPairwise(nn.Module):
         source_channels: int,
         target_channels: int,
         nb_features: Sequence[int] = (16, 16, 16, 16, 16),
-        normalizations: Union[List[Union[Callable, str]], Callable, str, None] = None,
         activations: Union[List[Union[Callable, str]], Callable, str, None] = nn.ReLU,
-        order: str = 'ca',
         final_activation: Union[str, nn.Module, None] = None,
         flow_initializer: float = 1e-5,
         integration_steps: int = 5,
         resize_integrated_fields: bool = False,
         device: str = "cpu",
-        **unet_kwargs,
+        unet_kwargs: dict | None = None,
     ):
         """
         Initialize the `VxmPairwise`.
@@ -98,46 +89,31 @@ class VxmPairwise(nn.Module):
         nb_features : List[int]
             Number of features at each level of the unet. Must be a list of
             positive integers.
-        normalizations : Union[List[str], str, None], optional
-            Normalization layers to use in each block. Can be a string or a list
-            of strings specifying normalizations for each layer, or `None` for no norm.
         activations : Union[List[str], str, Callable], optional
             Activation functions to use in each block. Can be a callable,
             a string, or a list of strings/callables.
-        order : str, optional
-            The order of operations in each convolutional block. Default is 'cna'
-            (normalization -> convolution -> activation). Each character in the string represents
-            one of the following:
-            - `'c'`: Convolution
-            - `'n'`: Normalization
-            - `'a'`: Activation
         integration_steps : int, optional
             Number of scaling and squaring steps for integrating the flow field.
             Default is 5.
         device : str, optional
             Device identifier (e.g., 'cpu' or 'cuda') to place/run the model on.
-        **unet_kwargs : dict
+        unet_kwargs : dict or None, optional
             Additional keyword arguments passed to `neurite.nn.models.BasicUNet`.
         """
-
-        # Initialize the Module
         super().__init__()
 
-        # Set constant attrs
         self.integration_steps = integration_steps
         self.resize_integrated_fields = resize_integrated_fields
         self.device = device
 
-        # Set derived attrs
         self._init_flow_layer(ndim, ndim, flow_initializer)
+        unet_kwargs = unet_kwargs or {}
         self.model = ne.nn.models.BasicUNet(
             ndim=ndim,
             in_channels=(source_channels + target_channels),
             out_channels=ndim,
             nb_features=nb_features,
-            normalizations=normalizations,
             activations=activations,
-            order=order,
             final_activation=final_activation,
             **unet_kwargs,
         )
