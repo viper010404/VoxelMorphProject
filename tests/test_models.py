@@ -226,3 +226,20 @@ def test_return_field_type_with_warped_images(dummy_input_pair, vxm_model_diffeo
     assert isinstance(warped_source, torch.Tensor), "Expected warped source tensor"
     assert vel.shape == (1, 3, 32, 32, 32)
     assert warped_source.shape == source.shape
+
+
+def test_unet_kwargs_conflict_raises_error():
+    """
+    Test that passing conflicting parameters in unet_kwargs raises TypeError.
+
+    Parameters explicitly passed to VxmPairwise (like nb_features) should not
+    also be passed in unet_kwargs.
+    """
+    with pytest.raises(TypeError, match="got multiple values for"):
+        vxm.nn.models.VxmPairwise(
+            ndim=3,
+            source_channels=1,
+            target_channels=1,
+            nb_features=(16, 16, 16, 16, 16),
+            unet_kwargs={'nb_features': (32, 32, 32, 32, 32)},
+        )
