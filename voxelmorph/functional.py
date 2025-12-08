@@ -28,8 +28,8 @@ __all__ = [
 
 
 def angles_to_rotation_matrix(
-        rotation: torch.Tensor,
-        degrees: bool = True
+    rotation: torch.Tensor,
+    degrees: bool = True
 ) -> torch.Tensor:
     """
     Compute a rotation matrix from the given rotation angles.
@@ -52,12 +52,12 @@ def angles_to_rotation_matrix(
         rotation = torch.deg2rad(rotation)
     rotation = torch.atleast_1d(rotation)
     n_angles = len(rotation)
+    assert n_angles in (1, 3), f"expected 1 or 3 rotation angles, got {n_angles}"
 
     if n_angles == 1:
         c, s = torch.cos(rotation[0]), torch.sin(rotation[0])
         matrix = torch.tensor([[c, -s], [s, c]], dtype=torch.float64)
-
-    elif n_angles == 3:
+    else:
         cx, sx = torch.cos(rotation[0]), torch.sin(rotation[0])
         cy, sy = torch.cos(rotation[1]), torch.sin(rotation[1])
         cz, sz = torch.cos(rotation[2]), torch.sin(rotation[2])
@@ -66,9 +66,6 @@ def angles_to_rotation_matrix(
         ry = torch.tensor([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]], dtype=torch.float64)
         rz = torch.tensor([[cz, sz, 0], [-sz, cz, 0], [0, 0, 1]], dtype=torch.float64)
         matrix = rx @ ry @ rz
-
-    else:
-        raise ValueError(f'expected 1 (2D) or 3 (3D) rotation angles, got {n_angles}')
 
     return matrix.to(rotation.device)
 
@@ -109,34 +106,29 @@ def params_to_affine(
     Tensor
         The composed affine matrix, as a tensor of shape `(ndim + 1, ndim + 1)`.
     """
-    if ndim not in (2, 3):
-        raise ValueError(f'affine transform must be 2D or 3D, got ndim {ndim}')
+    assert ndim in (2, 3), f'affine transform must be 2D or 3D, got ndim {ndim}'
 
     n_rotation_angles = 3 if ndim == 3 else 1
 
     # Validate and default translation
     translation = torch.zeros(ndim) if translation is None else torch.as_tensor(translation)
-    if len(translation) != ndim:
-        raise ValueError(f'translation must be of shape ({ndim},)')
+    assert len(translation) == ndim, f'Translation must be of shape ({ndim},)'
 
     # Validate and default rotation
     rotation = torch.zeros(n_rotation_angles) if rotation is None else torch.as_tensor(rotation)
     rotation = torch.atleast_1d(rotation)
-    if rotation.shape[0] != n_rotation_angles:
-        raise ValueError(f'rotation must be of shape ({n_rotation_angles},)')
+    assert rotation.shape[0] == n_rotation_angles, f'Rotation must be shape ({n_rotation_angles},)'
 
     # Validate and default scale
     scale = torch.ones(ndim) if scale is None else torch.as_tensor(scale)
     if scale.ndim == 0:
         scale = scale.repeat(ndim)
-    if scale.shape[0] != ndim:
-        raise ValueError(f'scale must be of size {ndim}')
+    assert scale.shape[0] == ndim, f'scale must be of size {ndim}'
 
     # Validate and default shear
     shear = torch.zeros(n_rotation_angles) if shear is None else torch.as_tensor(shear)
     shear = torch.atleast_1d(shear)
-    if shear.shape[0] != n_rotation_angles:
-        raise ValueError(f'shear must be of shape ({n_rotation_angles},)')
+    assert shear.shape[0] == n_rotation_angles, f'shear must be of shape ({n_rotation_angles},)'
 
     # start from translation
     T = torch.eye(ndim + 1, dtype=torch.float64)
@@ -225,10 +217,8 @@ def random_affine(
         rotation = np.array([max_rotation] * n_rotation_angles)
         scale = np.array([max_scaling] * ndim)
     else:
-        if max_scaling < 1:
-            raise ValueError(
-                'max_scaling must be >= 1 (scales are sampled in range [1/max, max])'
-            )
+        assert max_scaling >= 1, "max_scaling must be >= 1 (scales sampled in [1/max, max])"
+
         translation = np.random.uniform(-max_translation, max_translation, size=ndim)
         rotation = np.random.uniform(-max_rotation, max_rotation, size=n_rotation_angles)
         scale_direction = np.random.choice([-1, 1], size=ndim)
@@ -305,10 +295,9 @@ def affine_to_disp(
     >>> disp.shape
     torch.Size([2, 2, 64, 64])
     """
-    if meshgrid is None:
-        if shape is None:
-            raise ValueError("Either `meshgrid` or `shape` must be provided")
+    assert (meshgrid is None) != (shape is None), "Provide exactly one of `meshgrid` or `shape`"
 
+    if meshgrid is None:
         meshgrid = ne.volshape_to_ndgrid(
             size=shape, device=affine.device, dtype=affine.dtype, stack=True
         )
@@ -318,11 +307,9 @@ def affine_to_disp(
     spatial_shape = meshgrid.shape[1:]
     is_batched = affine.ndim == 3
 
-    if affine.shape[-1] != ndim + 1:
-        raise ValueError(
-            f'Affine dimensionality ({affine.shape[-1] - 1}D) does not match '
-            f'meshgrid dimensionality ({ndim}D)'
-        )
+    assert affine.shape[-1] == ndim + 1, (
+        f"affine dim ({affine.shape[-1] - 1}D) != meshgrid dim ({ndim}D)"
+    )
 
     # Center origin if requested
     grid = meshgrid
@@ -336,11 +323,9 @@ def affine_to_disp(
 
     # Right-compose with displacement field if provided
     if warp_right is not None:
-        if warp_right.shape[-ndim:] != spatial_shape:
-            raise ValueError(
-                f'warp_right spatial shape {warp_right.shape[-ndim:]} does not match '
-                f'meshgrid shape {spatial_shape}'
-            )
+        assert warp_right.shape[-ndim:] == spatial_shape, (
+            f"warp_right shape {warp_right.shape[-ndim:]} != meshgrid {spatial_shape}"
+        )
         coords = coords + warp_right.reshape(*warp_right.shape[:-ndim], -1)
 
     # Apply affine: A @ coords + t, then subtract original to get displacement
@@ -387,7 +372,6 @@ def disp_to_coords(
 
     if meshgrid is None:
         meshgrid = ne.volshape_to_ndgrid(size=spatial_shape, device=disp.device, stack=True)
-        assert isinstance(meshgrid, torch.Tensor)
 
     coords = meshgrid + disp
 
