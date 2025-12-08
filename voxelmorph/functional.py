@@ -707,8 +707,8 @@ def compose(
     Batch dimensions are automatically detected for displacement fields by comparing
     tensor.ndim to the expected ndim + 1 (unbatched) or ndim + 2 (batched).
     """
-    if len(transforms) == 0:
-        raise ValueError('Cannot compose empty list of transforms')
+    assert len(transforms) > 0, 'Cannot compose empty list of transforms'
+
     if len(transforms) == 1:
         return transforms[0]
 
@@ -839,10 +839,7 @@ def constant_shift_field(
     else:
         shift = torch.tensor(shift_size, dtype=torch.float32)
 
-    if shift.shape[0] != ndim:
-        raise ValueError(
-            f'shift_size must have {ndim} elements, got {shift.shape[0]}'
-        )
+    assert shift.shape[0] == ndim, f'shift_size must have {ndim} elements, got {shift.shape[0]}'
 
     # Broadcast shift values to full field: (ndim, *spatial_shape)
     shift = shift.view(-1, *[1] * ndim).to(device=device)
@@ -917,8 +914,7 @@ def make_square_affine(mat: torch.Tensor) -> torch.Tensor:
     >>> square[-1]
     tensor([0., 0., 1.])
     """
-    if not is_affine_shape(mat.shape):
-        raise ValueError(f'Invalid affine shape: {mat.shape}')
+    assert is_affine_shape(mat.shape), f'Invalid affine shape: {mat.shape}'
 
     # Already square
     if mat.shape[-2] == mat.shape[-1]:
@@ -1011,11 +1007,10 @@ def random_disp(
         tensor_ndim=len(shape)
     )
 
-    if num_non_spatial > 1:
-        raise ValueError(
-            f'random_disp only supports batch dimension (non_spatial_dims=None or (0,)), '
-            f'got non_spatial_dims={non_spatial_dims}'
-        )
+    assert num_non_spatial <= 1, (
+        "random_disp only supports batch dim (non_spatial_dims=None or (0,)), "
+        f"got non_spatial_dims={non_spatial_dims}"
+    )
 
     has_batch = num_non_spatial == 1
 
@@ -1148,11 +1143,10 @@ def random_transform(
         tensor_ndim=len(shape)
     )
 
-    if num_non_spatial > 1:
-        raise ValueError(
-            f'random_transform only supports batch dimension (non_spatial_dims=None or (0,)), '
-            f'got non_spatial_dims={non_spatial_dims}'
-        )
+    assert num_non_spatial <= 1, (
+        "random_transform only supports batch dim (non_spatial_dims=None or (0,)), "
+        f"got non_spatial_dims={non_spatial_dims}"
+    )
 
     has_batch = num_non_spatial == 1
     batch_size = shape[0] if has_batch else 1
