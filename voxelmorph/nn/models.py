@@ -13,10 +13,6 @@ import neurite as ne
 # Local imports
 import voxelmorph as vxm
 
-__all__ = [
-    "VxmPairwise",
-]
-
 
 class VxmPairwise(nn.Module):
     """

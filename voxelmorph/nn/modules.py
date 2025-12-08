@@ -3,7 +3,6 @@ Neural network building blocks for VoxelMorph.
 """
 
 # Standard library imports
-from collections.abc import Sequence
 from typing import Union, Optional
 
 # Third-party imports
@@ -14,12 +13,6 @@ import torch.nn.functional as nnf
 # Custom imports
 import neurite as ne
 import voxelmorph as vxm
-
-__all__ = [
-    "SpatialTransformer",
-    "IntegrateVelocityField",
-    "ResizeDisplacementField",
-]
 
 
 class SpatialTransformer(nn.Module):
@@ -185,8 +178,7 @@ class IntegrateVelocityField(nn.Module):
 
         super().__init__()
 
-        if steps < 0:
-            raise ValueError(f"steps should be >= 0, found: {steps}")
+        assert steps >= 0, f"steps must be >= 0, got {steps}"
 
         self.steps = steps
         self.scale = 1.0 / (2 ** self.steps)  # Initial downscaling factor

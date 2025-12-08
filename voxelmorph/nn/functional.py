@@ -12,16 +12,6 @@ import torch
 # Local imports
 import voxelmorph as vxm
 
-__all__ = [
-    "spatial_transform",
-    "disp_to_coords",
-    "coords_to_disp",
-    "integrate_disp",
-    "compose",
-    "random_disp",
-    "random_transform",
-]
-
 
 def spatial_transform(
     image: torch.Tensor,

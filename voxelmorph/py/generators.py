@@ -12,17 +12,6 @@ import numpy as np
 # Custom imports
 import voxelmorph as vxm
 
-__all__ = [
-    'volgen',
-    'scan_to_scan',
-    'scan_to_atlas',
-    'semisupervised',
-    'template_creation',
-    'conditional_template_creation',
-    'surf_semisupervised',
-    'synthmorph'
-]
-
 
 def volgen(
     vol_names,
@@ -186,10 +175,18 @@ def semisupervised(vol_names, seg_names, labels, atlas_file=None, downsize=2):
 
     # cache target vols and segs if atlas is supplied
     if atlas_file:
-        trg_vol = vxm.py.utils.load_volfile(atlas_file, np_var='vol',
-                                        add_batch_axis=True, add_feat_axis=True)
-        trg_seg = vxm.py.utils.load_volfile(atlas_file, np_var='seg',
-                                        add_batch_axis=True, add_feat_axis=True)
+        trg_vol = vxm.py.utils.load_volfile(
+            atlas_file,
+            np_var='vol',
+            add_batch_axis=True,
+            add_feat_axis=True
+        )
+        trg_seg = vxm.py.utils.load_volfile(
+            atlas_file,
+            np_var='seg',
+            add_batch_axis=True,
+            add_feat_axis=True
+        )
         trg_seg = split_seg(trg_seg)
 
     while True:
@@ -353,7 +350,11 @@ def surf_semisupervised(
     # pre-compute the atlas surface points
     atlas_surface_pts = np.zeros((batch_size, nb_surface_pts, len(vol_shape) + 1))
     if nb_labels_sample == len(labels):
-        nb_surface_pts_sel = vxm.py.utils.get_surface_pts_per_label(nb_surface_pts, layer_edge_ratios)
+        nb_surface_pts_sel = vxm.py.utils.get_surface_pts_per_label(
+            nb_surface_pts,
+            layer_edge_ratios
+        )
+
         for li, label in enumerate(labels):  # if only one label, get surface points here
             atlas_surface_pts_ = std_to_surf(atlas_sdt[li], nb_surface_pts_sel[li])[np.newaxis, ...]
             # get the surface point stack indexes for this element

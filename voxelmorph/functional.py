@@ -7,7 +7,6 @@ import numpy as np
 import torch
 
 import neurite as ne
-import neurite.nn.functional as nef
 
 __all__ = [
     'affine_to_disp',
