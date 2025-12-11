@@ -637,7 +637,7 @@ def integrate_disp(
 
 def compose(
     transforms: Sequence[torch.Tensor],
-    interpolation_mode: str = 'bilinear',
+    interpolation_mode: str = 'linear',
     origin_at_center: bool = True,
     shape: Union[Sequence[int], None] = None,
 ) -> torch.Tensor:
@@ -654,9 +654,9 @@ def compose(
         List or tuple of affine matrices and/or displacement fields to compose.
         - Affine matrices: shape (..., N, N+1) or (..., N+1, N+1)
         - Displacement fields: shape (ndim, *spatial) or (B, ndim, *spatial)
-    interpolation_mode : str, default='bilinear'
-        Interpolation method for composing displacement fields.
-        Options: 'bilinear', 'nearest', 'trilinear'.
+    interpolation_mode : str, default='linear'
+        Interpolation method for composing displacement fields. Options are:
+        {'linear', 'nearest'}.
     origin_at_center : bool, default=True
         Shift grid origin to image center when converting affine matrices to displacement fields.
     shape : Sequence[int] or None, default=None

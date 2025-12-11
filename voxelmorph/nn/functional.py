@@ -220,7 +220,7 @@ def integrate_disp(
 
 def compose(
     transforms: Sequence[torch.Tensor],
-    interpolation_mode: str = 'bilinear',
+    interpolation_mode: str = 'linear',
     origin_at_center: bool = True,
     shape: Union[Sequence[int], None] = None
 ) -> torch.Tensor:
@@ -237,8 +237,8 @@ def compose(
         List of transforms to compose. Each transform should be:
         - Displacement field: shape (B, ndim, *spatial)
         - Affine matrix: shape (N, N+1) or (N+1, N+1) or batched (B, N, N+1)
-    interpolation_mode : str, default='bilinear'
-        Interpolation method for composing displacement fields.
+    interpolation_mode : str, default='linear'
+        Interpolation method for composing displacement fields. Options are {'linear', 'nearest'}.
     origin_at_center : bool, default=True
         Place origin at image center when converting affine matrices to displacement.
     shape : Sequence[int] or None, default=None
