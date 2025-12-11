@@ -3,7 +3,7 @@ Core VoxelMorph models for unsupervised and supervised learning.
 """
 
 # Core library imports
-from typing import List, Literal, Sequence, Union, Callable, Tuple
+from typing import List, Literal, Sequence, Union, Callable, Tuple, Dict
 
 # Third-party imports
 import torch
@@ -69,7 +69,7 @@ class VxmPairwise(nn.Module):
         integration_steps: int = 5,
         resize_integrated_fields: bool = False,
         device: str = "cpu",
-        unet_kwargs: dict | None = None,
+        unet_kwargs: Union[Dict, None] = None,
     ):
         """
         Initialize the `VxmPairwise`.
