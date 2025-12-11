@@ -83,7 +83,7 @@ class SpatialTransformer(nn.Module):
         Notes
         -----
         - Expects deformation_field in channels-first format: (B, ndim, *spatial_dims)
-        - Processes each batch element independently since vxm.functional.spatial_transform
+        - Processes each batch element independently since vxm.spatial_transform
           expects displacement fields without batch dimension
         """
         assert moving_image.dim() >= 4, (
@@ -103,7 +103,7 @@ class SpatialTransformer(nn.Module):
                 stack=True
             )
 
-        return vxm.functional.spatial_transform(
+        return vxm.spatial_transform(
             image=moving_image,
             trf=deformation_field,
             mode=self.interpolation_mode,

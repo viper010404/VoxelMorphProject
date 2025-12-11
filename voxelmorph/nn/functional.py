@@ -67,7 +67,7 @@ def spatial_transform(
     >>> warped.shape
     torch.Size([1, 1, 64, 64, 64])
     """
-    return vxm.functional.spatial_transform(
+    return vxm.spatial_transform(
         image=image,
         trf=trf,
         mode=method,

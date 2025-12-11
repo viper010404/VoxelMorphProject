@@ -75,7 +75,7 @@ def test_disp_to_coords_zero_disp_2d():
     """
     # Displacement is (ndim, H, W) = (2, 2, 3)
     disp = torch.zeros(2, 2, 3, dtype=torch.float32)
-    coords = vxm.functional.disp_to_coords(disp)
+    coords = vxm.disp_to_coords(disp)
 
     # Output maintains (ndim, *spatial) = (2, 2, 3)
     assert coords.shape == (2, 2, 3)
@@ -117,7 +117,7 @@ def test_spatial_transform_identity_affine():
 
     # 2D identity affine (3×3)
     affine = torch.eye(3, dtype=torch.float32)
-    out = vxm.functional.spatial_transform(img, affine, non_spatial_dims=(0,))
+    out = vxm.spatial_transform(img, affine, non_spatial_dims=(0,))
 
     assert out.shape == img.shape
     assert torch.allclose(out, img, atol=1e-6)
@@ -367,7 +367,7 @@ def test_affine_to_disp_scaling_2d():
     affine[1, 1] = scale_factor  # y scaling
     # No translation - scale around origin
 
-    disp = vxm.functional.affine_to_disp(affine, meshgrid=grid, origin_at_center=False)
+    disp = vxm.affine_to_disp(affine, meshgrid=grid, origin_at_center=False)
 
     # Check shape - now (ndim, *spatial)
     assert disp.shape == (ndim,) + shape
@@ -520,7 +520,7 @@ def test_integrate_disp_zero_steps():
     """
     # Displacement is now (ndim, *spatial) = (2, 2, 3)
     disp = torch.randn(2, 2, 3, dtype=torch.float32)
-    integrated = vxm.functional.integrate_disp(disp, steps=0)
+    integrated = vxm.integrate_disp(disp, steps=0)
 
     assert torch.allclose(integrated, disp)
 
@@ -531,7 +531,7 @@ def test_integrate_disp_single_step():
     """
     # Displacement is now (ndim, *spatial) = (2, 2, 3)
     disp = torch.randn(2, 2, 3, dtype=torch.float32)
-    integrated = vxm.functional.integrate_disp(disp, steps=1)
+    integrated = vxm.integrate_disp(disp, steps=1)
 
     # Should have same shape
     assert integrated.shape == disp.shape
@@ -587,7 +587,7 @@ def test_affine_to_disp_large_translation():
     affine[0, -1] = large_translation
     affine[1, -1] = large_translation
 
-    disp = vxm.functional.affine_to_disp(affine, grid)
+    disp = vxm.affine_to_disp(affine, grid)
 
     # Check shape - now (ndim, *spatial)
     assert disp.shape == (ndim,) + shape
@@ -618,7 +618,7 @@ def test_affine_to_disp_origin_at_center_scaling():
     affine[1, 1] = scale_factor
 
     # Test with origin_at_center=True (scale around center)
-    disp_centered = vxm.functional.affine_to_disp(affine, shape=shape, origin_at_center=True)
+    disp_centered = vxm.affine_to_disp(affine, shape=shape, origin_at_center=True)
 
     # Center point (1,1) should have zero displacement
     # With (ndim, *spatial) format, access as disp[:, 1, 1] to get displacement vector
@@ -626,7 +626,7 @@ def test_affine_to_disp_origin_at_center_scaling():
         f"Center should be fixed, got displacement {disp_centered[:, 1, 1]}"
 
     # Test with origin_at_center=False (scale around corner)
-    disp_corner = vxm.functional.affine_to_disp(affine, shape=shape, origin_at_center=False)
+    disp_corner = vxm.affine_to_disp(affine, shape=shape, origin_at_center=False)
 
     # Corner (0,0) should have zero displacement
     assert torch.allclose(disp_corner[:, 0, 0], torch.zeros(2), atol=1e-6), \
@@ -652,7 +652,7 @@ def test_affine_to_disp_origin_at_center_rotation():
                            [1., 0., 0.]])
 
     # Test with origin_at_center=True (rotate around center)
-    disp_centered = vxm.functional.affine_to_disp(affine, shape=shape, origin_at_center=True)
+    disp_centered = vxm.affine_to_disp(affine, shape=shape, origin_at_center=True)
 
     # Center point (1,1) should have zero displacement (stays in place)
     # With (ndim, *spatial) format, access as disp[:, 1, 1] to get displacement vector
@@ -660,7 +660,7 @@ def test_affine_to_disp_origin_at_center_rotation():
         f"Center should be fixed during rotation, got {disp_centered[:, 1, 1]}"
 
     # Test with origin_at_center=False (rotate around corner)
-    disp_corner = vxm.functional.affine_to_disp(affine, shape=shape, origin_at_center=False)
+    disp_corner = vxm.affine_to_disp(affine, shape=shape, origin_at_center=False)
 
     # Corner (0,0) should have zero displacement
     assert torch.allclose(disp_corner[:, 0, 0], torch.zeros(2), atol=1e-6), \
@@ -830,7 +830,7 @@ def test_compose_two_affines():
 
     # Result should be affine shape (2, 3)
     assert composed.shape == (2, 3)
-    assert vxm.functional.is_affine_shape(composed.shape)
+    assert vxm.is_affine_shape(composed.shape)
 
     # Manual computation: translate @ scale (after making both square)
     # scale maps x -> 2x, then translate maps 2x -> 2x + t
