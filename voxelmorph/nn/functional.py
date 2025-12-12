@@ -34,7 +34,6 @@ def spatial_transform(
         Transformation field. Can be:
         - Affine matrix: shape (N+1, N+1) or (N, N+1)
         - Displacement field: shape (N, *spatial) - channels-first format
-        - Coordinate field: shape (*spatial, N) - channels-last for grid_sample
         - None: returns image unchanged
     method : str, default='linear'
         Interpolation mode ('linear' or 'nearest').

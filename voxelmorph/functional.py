@@ -472,7 +472,6 @@ def spatial_transform(
         - Affine matrix: shape (N+1, N+1) or (N, N+1)
         - Batched affine matrix: shape (B, N+1, N+1) or (B, N, N+1)
         - Displacement field: shape (N, *spatial) or (B, N, *spatial) - channels-first
-        - Coordinate field: shape (*spatial, N) or (B, *spatial, N) - channels-last for grid_sample
         - None: returns image unchanged
     mode : {'linear', 'nearest'}, default='linear'
         Interpolation mode. 'linear' will auto-detect appropriate mode (bilinear/trilinear) based
