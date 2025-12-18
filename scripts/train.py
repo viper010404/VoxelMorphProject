@@ -177,7 +177,9 @@ def main():
     parser.add_argument('--save-every', type=int, default=10, help='Checkpoint every N epochs')
     parser.add_argument('--patience', type=int, default=20, help='Early stopping patience')
     parser.add_argument('--threshold', type=float, default=0.0, help='Early stopping threshold')
-    parser.add_argument('--warm-start', type=int, default=10, help='Early stopping warm start steps')
+    parser.add_argument(
+        '--warm-start', type=int, default=10, help='Early stopping warm start steps'
+    )
     args = parser.parse_args()
 
     # Set device
@@ -236,7 +238,7 @@ def main():
 
         # Print progress
         if (epoch + 1) % 10 == 0:
-            print(f'Epoch {epoch+1}/{args.epochs}, Loss: {avg_loss:.6f}')
+            print(f'Epoch {epoch + 1}/{args.epochs}, Loss: {avg_loss:.6f}')
 
         # Early stopping check
         if ne.utils.early_stopping(
@@ -245,7 +247,7 @@ def main():
             threshold=args.threshold,
             warm_start_steps=args.warm_start
         ):
-            print(f'Early stopping at epoch {epoch+1}')
+            print(f'Early stopping at epoch {epoch + 1}')
             break
 
         # Save periodic checkpoints
@@ -253,7 +255,7 @@ def main():
 
             # Build checkpoint file name
             checkpoint_path = output_path.parent.joinpath(
-                f'{output_path.stem}_default-int_epoch{epoch+1}.pt'
+                f'{output_path.stem}_default-int_epoch{epoch + 1}.pt'
             )
 
             # Save
