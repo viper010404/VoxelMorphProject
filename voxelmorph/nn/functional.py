@@ -207,14 +207,7 @@ def integrate_disp(
     >>> disp.shape
     torch.Size([1, 3, 32, 32, 32])
     """
-    batch_size = disp.shape[0]
-
-    integrated = torch.stack([
-        vxm.integrate_disp(disp[i], steps=steps, meshgrid=meshgrid)
-        for i in range(batch_size)
-    ])
-
-    return integrated
+    return vxm.integrate_disp(disp, steps=steps, meshgrid=meshgrid, non_spatial_dims=(0,))
 
 
 def compose(

@@ -617,20 +617,80 @@ def spatial_transform(
 def integrate_disp(
     disp: torch.Tensor,
     steps: int,
-    meshgrid: Union[torch.Tensor, None] = None
+    meshgrid: Union[torch.Tensor, None] = None,
+    non_spatial_dims: Union[Tuple[int, ...], None] = None,
 ) -> torch.Tensor:
     """
-    TODOC
-    """
-    if meshgrid is None:
-        meshgrid = ne.volshape_to_ndgrid(size=disp.shape[1:], device=disp.device, stack=True)
+    Integrate a stationary velocity field to produce a displacement field.
 
+    Uses the scaling-and-squaring method to efficiently compute the exponential
+    map of the velocity field.
+
+    Parameters
+    ----------
+    disp : torch.Tensor
+        Velocity field with shape (ndim, *spatial) or (B, ndim, *spatial) if batched.
+    steps : int
+        Number of integration steps. The velocity is divided by 2^steps and then
+        composed with itself 2^steps times. More steps = more accurate but slower.
+    meshgrid : torch.Tensor or None, default=None
+        Pre-computed coordinate grid of shape (ndim, *spatial). If None, computed
+        from displacement field shape.
+    non_spatial_dims : Tuple[int, ...] or None, default=None
+        Indices of non-spatial dimensions:
+        - None: tensor is (ndim, *spatial), unbatched
+        - (0,): tensor is (B, ndim, *spatial), batched
+
+    Returns
+    -------
+    torch.Tensor
+        Integrated displacement field with same shape as input.
+
+    Examples
+    --------
+    >>> import voxelmorph as vxm
+    >>> # Unbatched velocity field
+    >>> vel = torch.randn(2, 64, 64) * 0.1
+    >>> disp = vxm.integrate_disp(vel, steps=7)
+    >>> disp.shape
+    torch.Size([2, 64, 64])
+
+    >>> # Batched velocity field
+    >>> vel = torch.randn(4, 2, 64, 64) * 0.1
+    >>> disp = vxm.integrate_disp(vel, steps=7, non_spatial_dims=(0,))
+    >>> disp.shape
+    torch.Size([4, 2, 64, 64])
+    """
     if steps == 0:
         return disp
 
+    # Parse dimensions
+    num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
+        non_spatial_dims=non_spatial_dims,
+        tensor_ndim=disp.ndim - 1  # subtract 1 for ndim dimension
+    )
+
+    has_batch = num_non_spatial == 1
+
+    # Determine spatial shape and create meshgrid if needed
+    if has_batch:
+        spatial_shape = disp.shape[2:]
+        st_non_spatial_dims = (0, 1)  # batch and ndim for spatial_transform
+    else:
+        spatial_shape = disp.shape[1:]
+        st_non_spatial_dims = (0,)  # just ndim for spatial_transform
+
+    if meshgrid is None:
+        meshgrid = ne.volshape_to_ndgrid(
+            size=spatial_shape, device=disp.device, dtype=disp.dtype, stack=True
+        )
+
+    # Scaling and squaring
     disp = disp / (2 ** steps)
     for _ in range(steps):
-        disp = disp + spatial_transform(disp, disp, meshgrid=meshgrid, non_spatial_dims=(0,))
+        disp = disp + spatial_transform(
+            disp, disp, meshgrid=meshgrid, non_spatial_dims=st_non_spatial_dims
+        )
 
     return disp
 
@@ -1158,13 +1218,10 @@ def random_disp(
 
     # Apply integration if requested
     if integrations > 0:
-        if has_batch:
-            disp = torch.stack([
-                integrate_disp(disp[i], integrations, meshgrid)
-                for i in range(disp.shape[0])
-            ])
-        else:
-            disp = integrate_disp(disp, integrations, meshgrid)
+        disp = integrate_disp(
+            disp, integrations, meshgrid,
+            non_spatial_dims=(0,) if has_batch else None
+        )
 
     return disp
 
