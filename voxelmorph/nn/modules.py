@@ -42,8 +42,6 @@ class SpatialTransformer(nn.Module):
 
         Parameters
         ----------
-        size : tuple[int] or None, optional
-            Deprecated. No longer used. Kept for backward compatibility.
         interpolation_mode : str, default='linear'
             Algorithm used for interpolating the warped image. Options are: {'linear', 'nearest'}
         align_corners : bool, default=True
