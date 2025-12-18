@@ -17,6 +17,7 @@ __all__ = [
     'coords_to_disp',
     'spatial_transform',
     'integrate_disp',
+    'resize_disp',
     'constant_shift_field',
     'compose',
     'is_affine_shape',
@@ -630,6 +631,125 @@ def integrate_disp(
     disp = disp / (2 ** steps)
     for _ in range(steps):
         disp = disp + spatial_transform(disp, disp, meshgrid=meshgrid, non_spatial_dims=(0,))
+
+    return disp
+
+
+def resize_disp(
+    disp: torch.Tensor,
+    scale_factor: Union[float, Sequence[float], None] = None,
+    shape: Union[Sequence[int], None] = None,
+    mode: Literal['linear', 'nearest'] = 'linear'
+) -> torch.Tensor:
+    """
+    Resize a displacement field spatially and scale magnitudes proportionally.
+
+    When resizing a displacement field, the vector magnitudes must be scaled along with
+    the spatial dimensions. A 1-pixel displacement in a 64x64 field should become a
+    2-pixel displacement when upsampled to 128x128.
+
+    Parameters
+    ----------
+    disp : torch.Tensor
+        Displacement field with shape (ndim, *spatial).
+    scale_factor : float, Sequence[float], or None, default=None
+        Factor by which to scale spatial dimensions. Values > 1 upsample, < 1 downsample.
+        Can be a scalar (uniform scaling) or a sequence with one factor per spatial dimension.
+        Mutually exclusive with `shape`.
+    shape : Sequence[int] or None, default=None
+        Target spatial shape. Mutually exclusive with `scale_factor`.
+    mode : {'linear', 'nearest'}, default='linear'
+        Interpolation mode for spatial resizing.
+
+    Returns
+    -------
+    torch.Tensor
+        Resized displacement field with shape (ndim, *new_spatial).
+
+    Examples
+    --------
+    >>> # Upsample 2x using scale_factor
+    >>> disp = torch.randn(2, 32, 32)
+    >>> resized = resize_disp(disp, scale_factor=2.0)
+    >>> resized.shape
+    torch.Size([2, 64, 64])
+
+    >>> # Downsample to specific shape
+    >>> disp = torch.randn(3, 64, 64, 64)
+    >>> resized = resize_disp(disp, shape=(32, 32, 32))
+    >>> resized.shape
+    torch.Size([3, 32, 32, 32])
+
+    >>> # Magnitude scaling: 1-pixel shift becomes 2-pixel shift when upsampled 2x
+    >>> disp = torch.ones(2, 4, 4)  # constant 1-pixel shift
+    >>> resized = resize_disp(disp, scale_factor=2.0)
+    >>> resized[0, 0, 0].item()  # now 2-pixel shift
+    2.0
+
+    >>> # Non-uniform scaling: double first dim, keep second unchanged
+    >>> disp = torch.ones(2, 4, 4)
+    >>> resized = resize_disp(disp, scale_factor=[2.0, 1.0])
+    >>> resized.shape
+    torch.Size([2, 8, 4])
+    >>> resized[0, 0, 0].item()  # first component scaled by 2
+    2.0
+    >>> resized[1, 0, 0].item()  # second component unchanged
+    1.0
+
+    Notes
+    -----
+    Exactly one of `scale_factor` or `shape` must be provided.
+    """
+    assert (scale_factor is None) != (shape is None), (
+        "Exactly one of `scale_factor` or `shape` must be provided"
+    )
+
+    spatial_shape = disp.shape[1:]
+    ndim = len(spatial_shape)
+
+    if shape is not None:
+        assert len(shape) == ndim, (
+            f"shape has {len(shape)} dims but disp has {ndim} spatial dims"
+        )
+        scale_factors = [shape[i] / spatial_shape[i] for i in range(ndim)]
+
+    elif isinstance(scale_factor, (list, tuple)):
+        assert len(scale_factor) == ndim, (
+            f"scale_factor has {len(scale_factor)} elements but disp has {ndim} spatial dims"
+        )
+        scale_factors = list(scale_factor)
+    else:
+        scale_factors = [scale_factor] * ndim
+
+    if all(s == 1.0 for s in scale_factors):
+        return disp
+
+    # Determine interpolation mode and parameters
+    if mode == 'linear':
+        interp_mode = ne.utils.infer_linear_interpolation_mode(ndim)
+        align_corners = True
+    else:
+        interp_mode = 'nearest'
+        align_corners = None
+
+    # Pass shape for determinism/safety if specific shape requested. Avoid rounding errors in scale.
+    disp = torch.nn.functional.interpolate(
+        disp.unsqueeze(0),
+        size=tuple(shape) if shape is not None else None,       # (guaranteed exact output shape)
+        scale_factor=tuple(scale_factors) if shape is None else None,
+        mode=interp_mode,
+        align_corners=align_corners
+    ).squeeze(0)
+
+    # Convert to tensor for broadcasting: (ndim, 1, 1, ...)
+    scale_tensor = torch.tensor(
+        scale_factors,
+        device=disp.device,
+        dtype=disp.dtype
+    ).view(-1, *[1] * ndim)
+
+    # Scale each displacement component by its corresponding dimension's factor
+    disp = disp * scale_tensor
 
     return disp
 
