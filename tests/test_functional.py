@@ -1215,3 +1215,177 @@ def test_vxf_compose_3d():
     composed = vxf.compose([disp1, disp2])
 
     assert composed.shape == (batch_size, 3, 8, 8, 8)
+
+
+def test_spatial_transform_non_square_single_pixel_2d():
+    """
+    Verify coordinate normalization is correct for non-square shapes by tracking a single pixel.
+
+    This test catches bugs where spatial dimensions are swapped during normalization.
+
+    Note: spatial_transform uses backward warping semantics:
+        output[y, x] = input[y + disp[0], x + disp[1]]
+    So positive displacement causes content to shift in the OPPOSITE direction visually.
+    With disp[0] = +2, content shifts UP (output[0,8] samples from input[2,8]).
+    """
+    # Asymmetric: H=8, W=16
+    H, W = 8, 16
+    image = torch.zeros(1, H, W, dtype=torch.float32)
+    image[0, 4, 8] = 1.0  # single bright pixel at row=4, col=8
+
+    # Displacement that samples from 2 rows down (content shifts UP visually)
+    # disp[0] is row displacement, disp[1] is col displacement
+    disp = torch.zeros(2, H, W, dtype=torch.float32)
+    disp[0, :, :] = 2.0  # sample from y+2
+    disp[1, :, :] = 0.0  # no shift in col direction
+
+    warped = vxm.spatial_transform(image, disp, non_spatial_dims=(0,))
+
+    # With backward warping: output[2, 8] = input[2+2, 8] = input[4, 8] = 1.0
+    # The pixel visually moves from (4, 8) to (2, 8)
+    assert warped.shape == image.shape
+    assert warped[0, 2, 8] > 0.5, f"Pixel should be at (2, 8), got max at {warped[0].argmax()}"
+    assert warped[0, 4, 8] < 0.1, "Original position should be empty"
+    # Verify column didn't change (would happen if normalization is wrong)
+    assert warped[0, 2, 10] < 0.1, "Pixel should not have moved horizontally"
+
+
+def test_spatial_transform_non_square_asymmetric_shift_2d():
+    """
+    Test asymmetric shifts on non-square image to verify each axis is normalized independently.
+
+    Uses different shift amounts in each direction on a highly asymmetric image.
+
+    Note: spatial_transform uses backward warping semantics:
+        output[y, x] = input[y + disp[0], x + disp[1]]
+    So positive displacement causes content to shift in the OPPOSITE direction visually.
+    """
+    # Very asymmetric: H=10, W=40
+    H, W = 10, 40
+    image = torch.zeros(1, H, W, dtype=torch.float32)
+    image[0, 4, 24] = 1.0  # bright pixel at (4, 24)
+
+    # Displacement: sample from (y+1, x+4)
+    # Content visually shifts UP by 1 and LEFT by 4
+    disp = torch.zeros(2, H, W, dtype=torch.float32)
+    disp[0, :, :] = 1.0  # sample from y+1
+    disp[1, :, :] = 4.0  # sample from x+4
+
+    warped = vxm.spatial_transform(image, disp, non_spatial_dims=(0,))
+
+    # With backward warping: output[3, 20] = input[3+1, 20+4] = input[4, 24] = 1.0
+    # Pixel visually moves from (4, 24) to (3, 20)
+    assert warped.shape == image.shape
+    assert warped[0, 3, 20] > 0.5, f"Pixel should be at (3, 20)"
+    assert warped[0, 4, 24] < 0.1, "Original position should be empty"
+
+
+def _measure_shift_magnitude(H: int, W: int, shift_dim: int, shift_amount: float) -> float:
+    """
+    Helper to measure actual shift magnitude on a non-square image.
+
+    Creates a gradient image in the shift direction, applies a constant displacement,
+    and measures the actual shift by comparing values at the center pixel.
+
+    Parameters
+    ----------
+    H : int
+        Image height.
+    W : int
+        Image width.
+    shift_dim : int
+        Dimension to shift (0 for y/rows, 1 for x/cols).
+    shift_amount : float
+        Displacement in pixels.
+
+    Returns
+    -------
+    float
+        Measured shift magnitude (should equal shift_amount if implementation is correct).
+    """
+    # Create image with linear gradient in the shift direction
+    image = torch.zeros(1, 1, H, W)
+    if shift_dim == 0:  # y-gradient
+        image[0, 0] = torch.arange(H, dtype=torch.float32).view(H, 1).expand(H, W)
+    else:  # x-gradient
+        image[0, 0] = torch.arange(W, dtype=torch.float32).view(1, W).expand(H, W)
+
+    # Create displacement field with shift in specified dimension
+    disp = torch.zeros(1, 2, H, W)
+    disp[0, shift_dim, :, :] = shift_amount
+
+    # Apply transform with border padding to avoid edge effects
+    output = vxm.spatial_transform(
+        image=image,
+        trf=disp,
+        mode='linear',
+        isdisp=True,
+        non_spatial_dims=(0, 1),
+        align_corners=True,
+        padding_mode='border'
+    )
+
+    # Measure shift at center pixel
+    center_y, center_x = H // 2, W // 2
+    input_val = image[0, 0, center_y, center_x].item()
+    output_val = output[0, 0, center_y, center_x].item()
+
+    return output_val - input_val
+
+
+@pytest.mark.parametrize("shift_dim,shift_amount", [
+    (0, 1.0),   # y-shift by 1 pixel
+    (0, 5.0),   # y-shift by 5 pixels
+    (1, 1.0),   # x-shift by 1 pixel
+    (1, 5.0),   # x-shift by 5 pixels
+])
+def test_spatial_transform_non_square_shift_magnitude_8to1(shift_dim, shift_amount):
+    """
+    Verify exact shift magnitude on 8:1 aspect ratio image (H=200, W=25).
+
+    Extreme aspect ratio makes normalization bugs very obvious.
+    A buggy implementation would scale shifts by 8x or 0.125x.
+    """
+    H, W = 200, 25
+    actual_shift = _measure_shift_magnitude(H, W, shift_dim, shift_amount)
+
+    assert abs(actual_shift - shift_amount) < 0.01, (
+        f"Shift in dim {shift_dim} by {shift_amount}: expected {shift_amount}, "
+        f"got {actual_shift:.4f} (error: {abs(actual_shift - shift_amount):.4f})"
+    )
+
+
+@pytest.mark.parametrize("shift_dim,shift_amount", [
+    (0, 1.0),   # y-shift by 1 pixel
+    (0, 5.0),   # y-shift by 5 pixels
+    (1, 1.0),   # x-shift by 1 pixel
+    (1, 5.0),   # x-shift by 5 pixels
+])
+def test_spatial_transform_non_square_shift_magnitude_1to8(shift_dim, shift_amount):
+    """
+    Verify exact shift magnitude on 1:8 aspect ratio image (H=25, W=200).
+
+    Tests the opposite extreme from 8:1 to ensure both tall and wide images work.
+    """
+    H, W = 25, 200
+    actual_shift = _measure_shift_magnitude(H, W, shift_dim, shift_amount)
+
+    assert abs(actual_shift - shift_amount) < 0.01, (
+        f"Shift in dim {shift_dim} by {shift_amount}: expected {shift_amount}, "
+        f"got {actual_shift:.4f} (error: {abs(actual_shift - shift_amount):.4f})"
+    )
+
+
+@pytest.mark.parametrize("shape,non_spatial_dims", [
+    ((2, 32, 32), None),           # Unbatched 2D
+    ((3, 16, 16, 16), None),       # Unbatched 3D
+    ((4, 2, 32, 32), (0,)),        # Batched 2D
+    ((4, 3, 16, 16, 16), (0,)),    # Batched 3D
+])
+def test_disp_trf_round_trip(shape, non_spatial_dims):
+    """Test that disp -> trf -> disp round-trip preserves values."""
+    torch.manual_seed(42)
+    original = torch.randn(shape)
+    trf = vxm.disp_to_trf(original, non_spatial_dims=non_spatial_dims)
+    recovered = vxm.trf_to_disp(trf, non_spatial_dims=non_spatial_dims)
+    assert torch.allclose(original, recovered, atol=1e-5)
