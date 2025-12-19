@@ -466,7 +466,8 @@ def trf_to_disp(
 
 def disp_to_coords(
     disp: torch.Tensor,
-    meshgrid: Union[torch.Tensor, None] = None,
+    meshgrid: torch.Tensor | None = None,
+    non_spatial_dims: Tuple[int, ...] | None = None,
 ) -> torch.Tensor:
     """
     Convert displacement field to normalized coordinates in [-1, 1] range for grid_sample.
@@ -476,41 +477,61 @@ def disp_to_coords(
     Parameters
     ----------
     disp : torch.Tensor
-        Displacement field with shape (ndim, *spatial).
+        Displacement field with shape (ndim, *spatial) or (B, ndim, *spatial) if batched.
     meshgrid : torch.Tensor or None, default=None
         Pre-computed coordinate grid of shape (ndim, *spatial). If None, computed
         from displacement field shape.
+    non_spatial_dims : tuple[int, ...] or None, default=None
+        Indices of non-spatial dimensions preceding the ndim dimension:
+        - None: tensor is (ndim, *spatial), unbatched
+        - (0,): tensor is (B, ndim, *spatial), batched
 
     Returns
     -------
     torch.Tensor
-        Normalized coordinates in range [-1, 1] with shape (ndim, *spatial).
+        Normalized coordinates in range [-1, 1] with same shape as input.
 
     Examples
     --------
-    >>> # 2D displacement field (ndim, H, W)
+    >>> # 2d displacement field (ndim, H, W)
     >>> disp = torch.randn(2, 64, 64)
     >>> coords = disp_to_coords(disp)
     >>> coords.shape
     torch.Size([2, 64, 64])
+
+    >>> # Batched displacement field (B, ndim, H, W)
+    >>> disp = torch.randn(4, 2, 64, 64)
+    >>> coords = disp_to_coords(disp, non_spatial_dims=(0,))
+    >>> coords.shape
+    torch.Size([4, 2, 64, 64])
     """
-    ndim = disp.shape[0]
-    spatial_shape = disp.shape[1:]
+    num_non_spatial, num_spatial = ne.functional._parse_non_spatial_dims(
+        non_spatial_dims=non_spatial_dims,
+        tensor_ndim=disp.ndim - 1  # subtract 1 for ndim dimension
+    )
+
+    has_batch = num_non_spatial == 1
+    ndim_axis = 1 if has_batch else 0
+    ndim = disp.shape[ndim_axis]
+    spatial_shape = disp.shape[ndim_axis + 1:]
 
     if meshgrid is None:
-        meshgrid = ne.volshape_to_ndgrid(size=spatial_shape, device=disp.device, stack=True)
+        meshgrid = ne.volshape_to_ndgrid(
+            size=spatial_shape,
+            device=disp.device,
+            dtype=disp.dtype,
+            stack=True,
+        )
 
     coords = meshgrid + disp
 
     # Normalize each spatial dimension to [-1, 1]
-    for d in range(ndim):
-        size = spatial_shape[d]
-        if size > 1:
-            coords[d] = coords[d] * 2 / (size - 1) - 1
-        else:
-            coords[d] = 0
+    sizes = torch.tensor(spatial_shape, device=disp.device, dtype=disp.dtype)
+    scales = 2.0 / (sizes - 1).clamp(min=1)  # avoid div by zero for size=1
+    broadcast_shape = (ndim,) + (1,) * num_spatial
+    scales = scales.view(broadcast_shape)
 
-    return coords
+    return coords * scales - 1.0
 
 
 def coords_to_disp(
@@ -691,11 +712,8 @@ def spatial_transform(
     trf_has_batch_dim = trf.ndim > (num_spatial + 1)
 
     if isdisp:
-        if trf_has_batch_dim:
-            coords_list = [disp_to_coords(trf[i], meshgrid=meshgrid) for i in range(trf.shape[0])]
-            trf = torch.stack(coords_list, dim=0)
-        else:
-            trf = disp_to_coords(trf, meshgrid=meshgrid)
+        trf_non_spatial = (0,) if trf_has_batch_dim else None
+        trf = disp_to_coords(trf, meshgrid=meshgrid, non_spatial_dims=trf_non_spatial)
 
     # Convert (ndim, *spatial) -> (*spatial, ndim) for grid_sample
     # and flip coordinate order (grid_sample expects reversed spatial dims)
