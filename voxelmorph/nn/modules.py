@@ -2,16 +2,16 @@
 Neural network building blocks for VoxelMorph.
 """
 
-# Standard library imports
+# Core library imports
 from typing import Union, Optional
 
 # Third-party imports
 import torch
 import torch.nn as nn
 import torch.nn.functional as nnf
-
-# Custom imports
 import neurite as ne
+
+# Local imports
 import voxelmorph as vxm
 
 

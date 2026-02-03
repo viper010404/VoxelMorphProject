@@ -2,7 +2,7 @@
 Loss functions for image registration.
 """
 
-# Standard library imports
+# Core library imports
 import math
 
 # Third-party imports

@@ -34,6 +34,7 @@ License.
 # Core library imports
 import argparse
 from typing import Sequence
+from pathlib import Path
 
 # Third-party imports
 import numpy as np
@@ -42,10 +43,9 @@ import torch
 from torch import nn
 from torch.utils.data import IterableDataset, DataLoader
 from tqdm import tqdm
-from pathlib import Path
+import neurite as ne
 
 # Local imports
-import neurite as ne
 import voxelmorph as vxm
 
 

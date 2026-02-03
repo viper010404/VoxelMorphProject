@@ -34,16 +34,18 @@ functions, and utilities, with PyTorch and TensorFlow backends.
 __version__ = '0.2'
 
 
+# Third-party imports
 from packaging import version
+import neurite
 
 # ensure valid neurite version is available
-import neurite
 minv = '0.2'
 curv = getattr(neurite, '__version__', None)
 if curv is None or version.parse(curv) < version.parse(minv):
     raise ImportError(f'voxelmorph requires neurite version {minv} or greater, '
                       f'but found version {curv}')
 
+# Local imports
 from . import nn
 from . import py
 from .functional import *

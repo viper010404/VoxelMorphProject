@@ -2,14 +2,14 @@
 Data generators for medical image registration.
 """
 
-# Standard library imports
+# Core library imports
 import os
 import glob
 
 # Third-party imports
 import numpy as np
 
-# Custom imports
+# Local imports
 import voxelmorph as vxm
 
 

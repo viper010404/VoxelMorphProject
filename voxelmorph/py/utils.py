@@ -2,17 +2,15 @@
 General-purpuse python utilities for VoxelMorph.
 """
 
-# Standard library imports
+# Core library imports
 import os
 import csv
 import pathlib
 
-# Third-party Imports
+# Third-party imports
 import numpy as np
 import scipy
 from skimage import measure
-
-# Custom imports
 import pystrum.pynd.ndutils as nd
 
 __all__ = [

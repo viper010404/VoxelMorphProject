@@ -1,11 +1,12 @@
 """
 Single tensor operations (no B, C, dimensions assumption)
 """
+# Core library imports
 from typing import Union, Sequence, Tuple, Literal
 
+# Third-party imports
 import numpy as np
 import torch
-
 import neurite as ne
 
 __all__ = [

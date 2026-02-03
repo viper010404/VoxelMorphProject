@@ -3,7 +3,7 @@ Functions containing the core operations and logic of for image registration for
 written in PyTorch.
 """
 
-# Standard library imports
+# Core library imports
 from typing import List, Union, Sequence, Literal
 
 # Third-party imports
