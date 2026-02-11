@@ -1286,7 +1286,7 @@ def random_disp(
     meshgrid: Union[torch.Tensor, None] = None,
     non_spatial_dims: Union[Sequence[int], None] = None,
     device: Union[torch.device, None] = None,
-    method: Literal['blur', 'upsample'] = 'upsample'
+    fractal_mode: Literal['blur', 'upsample'] = 'upsample'
 ) -> torch.Tensor:
     """
     Generate random displacement field using fractal noise.
@@ -1302,9 +1302,9 @@ def random_disp(
         - non_spatial_dims=(0,): (B, *spatial), output is (B, ndim, *spatial)
     scales : float, int, or Sequence[float or int], default=10
         Smoothing scale(s) for fractal noise, divided by voxsize. Interpretation depends
-        on method:
-        - method='blur': sigma values for Gaussian smoothing
-        - method='upsample': downsampling factors for upsampled noise
+        on fractal_mode:
+        - fractal_mode='blur': sigma values for Gaussian smoothing
+        - fractal_mode='upsample': downsampling factors for upsampled noise
     magnitude : float or int, default=10
         Standard deviation of displacement in voxel coordinates, divided by voxsize.
     integrations : int, default=0
@@ -1320,8 +1320,8 @@ def random_disp(
         - (0,): first dim is batch (B, *spatial)
     device : torch.device or None, default=None
         Device for tensor allocation.
-    method : {'blur', 'upsample'}, default='upsample'
-        Noise generation method:
+    fractal_mode : {'blur', 'upsample'}, default='upsample'
+        Fractal noise generation method:
         - 'blur': Generate noise and apply Gaussian smoothing (higher quality)
         - 'upsample': Generate coarse noise and upsample (faster, lower memory)
 
@@ -1377,7 +1377,7 @@ def random_disp(
             magnitude=magnitude,
             non_spatial_dims=non_spatial_dims,
             device=device,
-            method=method,
+            method=fractal_mode,
         )
         disp_components.append(noise)
 
@@ -1408,7 +1408,7 @@ def random_transform(
     voxsize: Union[float, int] = 1,
     non_spatial_dims: Union[Sequence[int], None] = None,
     device: Union[torch.device, None] = None,
-    method: Literal['blur', 'upsample'] = 'upsample',
+    fractal_mode: Literal['blur', 'upsample'] = 'upsample',
     sampling: bool = True,
 ) -> torch.Tensor:
     """
@@ -1448,8 +1448,8 @@ def random_transform(
         - (0,): first dim is batch (B, *spatial)
     device : torch.device or None, default=None
         Device for tensor allocation.
-    method : {'blur', 'upsample'}, default='upsample'
-        Noise generation method for nonlinear warp.
+    fractal_mode : {'blur', 'upsample'}, default='upsample'
+        Fractal noise generation method for nonlinear warp.
     sampling : bool, default=True
         If True, sample random parameters. If False, use maximum values directly.
 
@@ -1521,7 +1521,7 @@ def random_transform(
                 integrations=warp_integrations,
                 voxsize=voxsize,
                 device=device,
-                method=method
+                fractal_mode=fractal_mode
             )
             if trf is None:
                 trf = disp
