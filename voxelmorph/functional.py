@@ -1501,7 +1501,7 @@ def random_transform(
         trf = None
 
         # Random affine component
-        if ne.utils.bernoulli(p=affine_probability, shape=(1,)).item():
+        if np.random.rand() < affine_probability:
             matrix = random_affine(
                 ndim=num_spatial,
                 max_translation=max_translation / voxsize,
@@ -1513,7 +1513,7 @@ def random_transform(
             trf = affine_to_disp(matrix, meshgrid)
 
         # Random nonlinear warp component
-        if ne.utils.bernoulli(p=warp_probability, shape=(1,)).item():
+        if np.random.rand() < warp_probability:
             disp = random_disp(
                 shape=spatial_shape,
                 scales=np.random.uniform(*warp_scales_range),
