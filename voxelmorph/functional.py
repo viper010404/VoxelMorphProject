@@ -1369,17 +1369,17 @@ def random_disp(
     magnitude = magnitude / voxsize
 
     # Generate independent fractal noise for each spatial dimension
-    disp_components = [
-        ne.fractal_noise(
+    disp_components = []
+    for _ in range(num_spatial):
+        noise = ne.fractal_noise(
             shape=shape,
             scales=scales,
             magnitude=magnitude,
             non_spatial_dims=non_spatial_dims,
             device=device,
-            method=method
+            method=method,
         )
-        for _ in range(num_spatial)
-    ]
+        disp_components.append(noise)
 
     # Stack: (ndim, *spatial) or (B, ndim, *spatial)
     stack_dim = 1 if has_batch else 0
