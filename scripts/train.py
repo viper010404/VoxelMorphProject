@@ -44,6 +44,7 @@ from torch import nn
 from torch.utils.data import IterableDataset, DataLoader
 from tqdm import tqdm
 import neurite as ne
+from neurite_sandbox.etienne_chollet.utils.utils import early_stopping
 
 # Local imports
 import voxelmorph as vxm
@@ -241,7 +242,7 @@ def main():
             print(f'Epoch {epoch + 1}/{args.epochs}, Loss: {avg_loss:.6f}')
 
         # Early stopping check
-        if ne.utils.early_stopping(
+        if early_stopping(
             loss_history,
             patience=args.patience,
             threshold=args.threshold,
