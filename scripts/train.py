@@ -44,7 +44,6 @@ from torch import nn
 from torch.utils.data import IterableDataset, DataLoader
 from tqdm import tqdm
 import neurite as ne
-from neurite_sandbox.etienne_chollet.utils.utils import early_stopping
 
 # Local imports
 import voxelmorph as vxm
@@ -167,8 +166,8 @@ def train_epoch(
 
 def main():
     parser = argparse.ArgumentParser(description='Train 3D VoxelMorph on OASIS data')
-    parser.add_argument('--output', type=str, default='model_3d.pt', help='Output model path')
-    parser.add_argument('--epochs', type=int, default=100, help='Number of epochs')
+    parser.add_argument('--output-dir', type=str, default='output', help='Output directory')
+    parser.add_argument('--epochs', type=int, default=100_000, help='Number of epochs')
     parser.add_argument('--workers', type=int, default=0, help='Number of workers')
     parser.add_argument('--steps-per-epoch', type=int, default=100, help='Steps per epoch')
     parser.add_argument('--batch-size', type=int, default=4, help='Batch size')
@@ -176,11 +175,6 @@ def main():
     parser.add_argument('--lambda', type=float, dest='lambda_param', default=0.01)
     parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
     parser.add_argument('--save-every', type=int, default=10, help='Checkpoint every N epochs')
-    parser.add_argument('--patience', type=int, default=20, help='Early stopping patience')
-    parser.add_argument('--threshold', type=float, default=0.0, help='Early stopping threshold')
-    parser.add_argument(
-        '--warm-start', type=int, default=10, help='Early stopping warm start steps'
-    )
     args = parser.parse_args()
 
     # Set device
@@ -212,14 +206,13 @@ def main():
         )
     )
 
-    # Create output directory if needed
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Create output directory
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Training loop
     print(f'Training for {args.epochs} epochs...')
     best_loss = float('inf')
-    loss_history = []
     for epoch in tqdm(range(args.epochs), desc='Epochs'):
 
         # Train for one epoch
@@ -234,44 +227,27 @@ def main():
             device=device
         )
 
-        # Track loss history
-        loss_history.append(avg_loss)
-
         # Print progress
         if (epoch + 1) % 10 == 0:
             print(f'Epoch {epoch + 1}/{args.epochs}, Loss: {avg_loss:.6f}')
 
-        # Early stopping check
-        if early_stopping(
-            loss_history,
-            patience=args.patience,
-            threshold=args.threshold,
-            warm_start_steps=args.warm_start
-        ):
-            print(f'Early stopping at epoch {epoch + 1}')
-            break
-
         # Save periodic checkpoints
         if (epoch + 1) % args.save_every == 0:
 
-            # Build checkpoint file name
-            checkpoint_path = output_path.parent.joinpath(
-                f'{output_path.stem}_default-int_epoch{epoch + 1}.pt'
-            )
-
-            # Save
+            checkpoint_path = output_dir / f'checkpoint_epoch{epoch + 1}.pt'
             torch.save(model.state_dict(), checkpoint_path)
             print(f'Checkpoint saved to {checkpoint_path}')
 
         # Save best model
         if avg_loss < best_loss:
             best_loss = avg_loss
-            best_path = output_path.parent / f'{output_path.stem}_best.pt'
+            best_path = output_dir / 'best.pt'
             torch.save(model.state_dict(), best_path)
 
     # Save final model
-    torch.save(model.state_dict(), args.output)
-    print(f'Final model saved to {args.output}')
+    final_path = output_dir / 'final.pt'
+    torch.save(model.state_dict(), final_path)
+    print(f'Final model saved to {final_path}')
 
 
 if __name__ == '__main__':
