@@ -14,6 +14,23 @@ To use the VoxelMorph library, either clone this repository and install the requ
 pip install voxelmorph
 ```
 
+### Pre-commit hooks
+
+This repo uses `pre-commit` to run `pycodestyle` before commits.
+
+Install once after cloning:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+You can also run the check manually:
+
+```bash
+pre-commit run pycodestyle --all-files
+```
+
 # Tutorial
 
 We have several VoxelMorph tutorials:
