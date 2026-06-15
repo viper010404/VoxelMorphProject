@@ -50,27 +50,45 @@ def angles_to_rotation_matrix(
     Tensor
         The computed `(ndim, ndim)` rotation matrix.
     """
-    rotation = torch.as_tensor(rotation)
+    rotation = torch.as_tensor(rotation, dtype=torch.float64)
     if degrees:
         rotation = torch.deg2rad(rotation)
     rotation = torch.atleast_1d(rotation)
     n_angles = len(rotation)
     assert n_angles in (1, 3), f"expected 1 or 3 rotation angles, got {n_angles}"
 
+    zero = rotation.new_zeros(())
+    one = rotation.new_ones(())
+
     if n_angles == 1:
         c, s = torch.cos(rotation[0]), torch.sin(rotation[0])
-        matrix = torch.tensor([[c, -s], [s, c]], dtype=torch.float64)
+        matrix = torch.stack([
+            torch.stack([c, -s]),
+            torch.stack([s, c]),
+        ])
     else:
         cx, sx = torch.cos(rotation[0]), torch.sin(rotation[0])
         cy, sy = torch.cos(rotation[1]), torch.sin(rotation[1])
         cz, sz = torch.cos(rotation[2]), torch.sin(rotation[2])
 
-        rx = torch.tensor([[1, 0, 0], [0, cx, sx], [0, -sx, cx]], dtype=torch.float64)
-        ry = torch.tensor([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]], dtype=torch.float64)
-        rz = torch.tensor([[cz, sz, 0], [-sz, cz, 0], [0, 0, 1]], dtype=torch.float64)
+        rx = torch.stack([
+            torch.stack([one, zero, zero]),
+            torch.stack([zero, cx, sx]),
+            torch.stack([zero, -sx, cx]),
+        ])
+        ry = torch.stack([
+            torch.stack([cy, zero, sy]),
+            torch.stack([zero, one, zero]),
+            torch.stack([-sy, zero, cy]),
+        ])
+        rz = torch.stack([
+            torch.stack([cz, sz, zero]),
+            torch.stack([-sz, cz, zero]),
+            torch.stack([zero, zero, one]),
+        ])
         matrix = rx @ ry @ rz
 
-    return matrix.to(rotation.device)
+    return matrix
 
 
 def params_to_affine(

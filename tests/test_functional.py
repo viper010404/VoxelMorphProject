@@ -304,6 +304,17 @@ def test_angles_to_rotation_matrix_3d_90_degrees():
     assert torch.allclose(rotation_matrix, expected, atol=1e-5)
 
 
+def test_angles_to_rotation_matrix_3d_preserves_gradients():
+    """
+    A 3D rotation matrix must preserve autograd history from all input angles.
+    """
+    rotation = torch.tensor([0.1, 0.2, 0.3], dtype=torch.float64, requires_grad=True)
+    rotation_matrix = vxm.angles_to_rotation_matrix(rotation, degrees=False)
+
+    rotation_matrix.sum().backward()
+
+    assert int(torch.count_nonzero(rotation.grad).item()) == 3
+
 def test_params_to_affine_translation_shear():
     """
     Composing two translations should yield the sum of the two translations.
