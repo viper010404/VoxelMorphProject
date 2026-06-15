@@ -43,3 +43,9 @@ uv.lock
 pyrightconfig.json
 .vscode
 TODO/
+AGENTS.md
+concepts.txt
+package-lock.json
+package.json
+.codex/
+.pi/
