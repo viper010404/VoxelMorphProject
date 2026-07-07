@@ -12,7 +12,7 @@ import torch.nn.functional as nnf
 import neurite as ne
 
 # Local imports
-import voxelmorph as vxm
+import voxelmorph.nn.functional as vxf
 
 
 class SpatialTransformer(nn.Module):
@@ -80,8 +80,8 @@ class SpatialTransformer(nn.Module):
         Notes
         -----
         - Expects deformation_field in channels-first format: (B, ndim, *spatial_dims)
-        - Processes each batch element independently since vxm.spatial_transform
-          expects displacement fields without batch dimension
+        - Uses voxelmorph.nn.functional.spatial_transform for the canonical
+          (B, C, *spatial) tensor format.
         """
         assert moving_image.dim() >= 4, (
             f"moving_image must have >=4 dims (B,C,*spatial), got {moving_image.shape}"
@@ -100,13 +100,12 @@ class SpatialTransformer(nn.Module):
                 stack=True
             )
 
-        return vxm.spatial_transform(
+        return vxf.spatial_transform(
             image=moving_image,
             trf=deformation_field,
-            mode=self.interpolation_mode,
+            method=self.interpolation_mode,
             isdisp=True,
             meshgrid=self.meshgrid,
-            non_spatial_dims=(0, 1),
             align_corners=self.align_corners,
             padding_mode='zeros'
         )
