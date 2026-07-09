@@ -31,7 +31,7 @@ functions, and utilities, with PyTorch and TensorFlow backends.
 """
 
 # set version
-__version__ = '0.2'
+__version__ = '0.3.1'
 
 
 # Third-party imports

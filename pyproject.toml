@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "voxelmorph"
-version = "0.2"
+version = "0.3.1"
 description = "Unsupervised Learning for Image Registration."
 requires-python = ">=3.8"
 readme = "README.md"
@@ -23,7 +23,12 @@ authors = [
 dependencies = [
   "torch",
   "scikit-image",
-  'neurite @ git+https://github.com/adalca/neurite.git@dev',
+  "packaging",
+  "numpy",
+  "scipy",
+  "nibabel",
+  "h5py",
+  "neurite>=0.2",
 ]
 keywords = [
   "python",
@@ -35,4 +40,4 @@ keywords = [
 
 [project.urls]
 GitHub = "https://github.com/voxelmorph/voxelmorph"
-# PyPi = "https://pypi.org/project/voxelmorpm/"
+PyPI = "https://pypi.org/project/voxelmorph/"

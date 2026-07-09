@@ -4,15 +4,17 @@
 
 > ⚠️ **Warning**: VoxelMorph pytorch is under active development. Interfaces may change.
 
-> **For users who want to use the stable TensorFlow version**, use either `pip install voxelmorph`, or pull/clone from the [`dev-tensorflow`](https://github.com/voxelmorph/voxelmorph/tree/dev-tensorflow) branch.
+> **For users who want to use the stable TensorFlow version**, pull or clone the [`dev-tensorflow`](https://github.com/voxelmorph/voxelmorph/tree/dev-tensorflow) branch.
 
 ## Install
 
-To use the VoxelMorph library, either clone this repository and install the requirements listed in `setup.py` or install directly with pip.
+Install the published package from PyPI:
 
 ```
 pip install voxelmorph
 ```
+
+To work from a source checkout, clone this repository and install the requirements listed in `setup.py`.
 
 ### Pre-commit hooks
 
@@ -48,9 +50,9 @@ We have several VoxelMorph tutorials:
 
 # Instructions
 
-To use the VoxelMorph library, clone this repository and install the requirements listed in `setup.py`.
+To use the VoxelMorph library from source, clone this repository and install the requirements listed in `setup.py`.
 
-> **Note**: The `pip install voxelmorph` command is not yet supported. Please install directly from GitHub:
+> **Note**: For source development, install from GitHub instead:
 
 ```
 pip install git+https://github.com/voxelmorph/voxelmorph.git
