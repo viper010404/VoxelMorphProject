@@ -31,7 +31,7 @@ functions, and utilities, with PyTorch and TensorFlow backends.
 """
 
 # set version
-__version__ = '0.3.1'
+__version__ = '0.3.2'
 
 
 # Third-party imports
@@ -39,7 +39,7 @@ from packaging import version
 import neurite
 
 # ensure valid neurite version is available
-minv = '0.2'
+minv = '0.3'
 curv = getattr(neurite, '__version__', None)
 if curv is None or version.parse(curv) < version.parse(minv):
     raise ImportError(f'voxelmorph requires neurite version {minv} or greater, '
