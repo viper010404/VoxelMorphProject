@@ -1,0 +1,217 @@
+"""
+Experiment configuration.
+
+Every run is fully described by an `ExperimentConfig`, which is serialised to `config.json`
+beside the checkpoint. Evaluation reconstructs the model from that file alone, so scoring is
+decoupled from training: any checkpoint can be re-scored later without knowing which branch
+produced it.
+"""
+
+import json
+from pathlib import Path
+from dataclasses import dataclass, asdict, field
+from typing import List, Optional, Sequence
+
+
+VARIANTS = ('baseline', 'lambda_field', 'cross_attn')
+
+
+@dataclass
+class ExperimentConfig:
+    """
+    Full description of one training run.
+
+    Attributes
+    ----------
+    name : str
+        Unique run name; also the results directory name.
+    variant : str
+        Which model to build, one of `VARIANTS`.
+    ndim : int
+        Spatial dimensionality, 2 or 3.
+    lambda_reg : float
+        Smoothness weight. For `lambda_field` this is the *mean* of the learned weight map, so
+        the total regularisation budget matches the baseline exactly and only its spatial
+        distribution differs.
+    integration_steps : int
+        Scaling-and-squaring steps. 0 gives a plain displacement field (the CVPR formulation);
+        >0 integrates a stationary velocity field, giving a diffeomorphism. Orthogonal to the
+        choice of variant.
+    nb_features : sequence of int
+        UNet features per level. Spatial dimensions must be divisible by 2**len(nb_features).
+    steps : int
+        Number of training iterations.
+    batch_size : int
+        Pairs per iteration. Avoid 3 in 2D and 4 in 3D anywhere `voxelmorph.nn.functional.compose`
+        is reachable: its batch detection misreads those shapes.
+    lr : float
+        Adam learning rate. The paper uses 1e-4.
+    seed : int
+        Seed for model init and pair sampling; varied to build the ensemble.
+    val_every : int
+        Validation interval in steps. The best-on-validation checkpoint is the one evaluated,
+        so the test split is only touched once.
+    val_pairs : int
+        Number of validation pairs used for model selection.
+    attn_heads : int
+        Attention heads for the `cross_attn` variant.
+    data_path : str
+        Path to the `.npz` cache.
+    output_root : str
+        Directory under which `<name>/` is created.
+    """
+
+    name: str
+    variant: str = 'baseline'
+    ndim: int = 2
+    lambda_reg: float = 0.01
+    integration_steps: int = 0
+    nb_features: Sequence[int] = (16, 32, 32, 32, 32)
+    steps: int = 20000
+    batch_size: int = 16
+    lr: float = 1e-4
+    seed: int = 0
+    val_every: int = 2000
+    # Per-pair Dice varies a great deal between subject pairs (standard deviation ~0.1), so a
+    # small validation set selects on noise. 64 pairs keeps the standard error near 0.01 while
+    # costing only a few seconds per check.
+    val_pairs: int = 64
+    attn_heads: int = 4
+    data_path: str = 'data/oasis2d.npz'
+    output_root: str = 'results'
+
+    def __post_init__(self) -> None:
+        if self.variant not in VARIANTS:
+            raise ValueError(f"variant must be one of {VARIANTS}, got '{self.variant}'")
+        if self.ndim not in (2, 3):
+            raise ValueError(f'ndim must be 2 or 3, got {self.ndim}')
+        self.nb_features = tuple(self.nb_features)
+
+    @property
+    def output_dir(self) -> Path:
+        """Directory holding this run's checkpoints, config and results."""
+        return Path(self.output_root) / self.name
+
+    def save(self) -> Path:
+        """Write `config.json` into the run directory and return its path."""
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        path = self.output_dir / 'config.json'
+        with open(path, 'w') as f:
+            json.dump(asdict(self), f, indent=2)
+        return path
+
+    @classmethod
+    def load(cls, path) -> 'ExperimentConfig':
+        """Rebuild a config from a `config.json` written by `save`."""
+        with open(path) as f:
+            return cls(**json.load(f))
+
+
+def build_matrix(
+    ndim: int = 2,
+    # Centred on 0.1, located empirically: at 0.01 the deformation folds on 3.3% of voxels
+    # (the paper reports 0.2-0.4%) while at 5.0 it is too stiff to align anything. The
+    # smoothness term here is a mean over voxels, so the paper's quoted 0.01 does not transfer.
+    lambdas: Sequence[float] = (0.05, 0.1, 0.25),
+    integration_steps: Sequence[int] = (0, 7),
+    variants: Sequence[str] = VARIANTS,
+    steps: Optional[int] = None,
+    data_path: Optional[str] = None,
+    batch_size: Optional[int] = None,
+) -> List[ExperimentConfig]:
+    """
+    Build the sweep of configurations for the bake-off.
+
+    The baseline and `lambda_field` variants are swept over lambda so the comparison is against
+    the *best* baseline rather than an arbitrary one -- otherwise any improvement could just be
+    a better-tuned regulariser. `cross_attn` is run at the middle lambda only, to keep the
+    schedule affordable.
+
+    Parameters
+    ----------
+    ndim : int, optional
+        Spatial dimensionality of the sweep.
+    lambdas : sequence of float, optional
+        Smoothness weights to sweep.
+    integration_steps : sequence of int, optional
+        Displacement (0) and/or diffeomorphic (>0) settings.
+    variants : sequence of str, optional
+        Which model variants to include.
+    steps : int or None, optional
+        Training iterations; defaults to 20000 in 2D and 20000 in 3D.
+    data_path : str or None, optional
+        Override the dataset cache path.
+    batch_size : int or None, optional
+        Override the batch size. Defaults to 16 in 2D and 1 in 3D.
+
+    Returns
+    -------
+    list of ExperimentConfig
+    """
+    if data_path is None:
+        data_path = 'data/oasis2d.npz' if ndim == 2 else 'data/oasis3d_cache'
+    if batch_size is None:
+        batch_size = 16 if ndim == 2 else 1
+    if steps is None:
+        steps = 20000
+
+    # A 3D validation pass costs ~1.8 s per pair (Dice over 33 structures on 6.9M voxels, plus
+    # the Jacobian determinant), so the 2D settings would add ~19 min to every run. Validate
+    # less often and on fewer pairs; between-pair variance is lower in 3D than on a single slice.
+    val_pairs = 64 if ndim == 2 else 32
+    val_every = 2000 if ndim == 2 else 4000
+
+    configs: List[ExperimentConfig] = []
+    for variant in variants:
+        # Sweep lambda only where it is the quantity under test; cross-attention runs at the
+        # middle value so the schedule stays affordable.
+        if variant in ('baseline', 'lambda_field'):
+            sweep = tuple(lambdas)
+        else:
+            sweep = (lambdas[len(lambdas) // 2],)
+        for lam in sweep:
+            for isteps in integration_steps:
+                tag = 'svf' if isteps > 0 else 'disp'
+                configs.append(ExperimentConfig(
+                    name=f'{ndim}d_{variant}_lam{lam}_{tag}',
+                    variant=variant,
+                    ndim=ndim,
+                    lambda_reg=lam,
+                    integration_steps=isteps,
+                    steps=steps,
+                    batch_size=batch_size,
+                    val_pairs=val_pairs,
+                    val_every=val_every,
+                    data_path=data_path,
+                ))
+    return configs
+
+
+def ensemble_configs(
+    base: ExperimentConfig,
+    seeds: Sequence[int] = (0, 1, 2, 3, 4),
+) -> List[ExperimentConfig]:
+    """
+    Replicate a configuration across seeds to form an ensemble.
+
+    Per-voxel variance across independently trained models gives the uncertainty estimate, and
+    -- for the lambda-field variant -- lets us check whether the learned weight map is
+    reproducible rather than an artefact of one initialisation.
+
+    Parameters
+    ----------
+    base : ExperimentConfig
+        Configuration to replicate.
+    seeds : sequence of int, optional
+        Seeds to train.
+
+    Returns
+    -------
+    list of ExperimentConfig
+    """
+    members = []
+    for seed in seeds:
+        member = ExperimentConfig(**{**asdict(base), 'name': f'{base.name}_seed{seed}',
+                                     'seed': seed})
+        members.append(member)
+    return members

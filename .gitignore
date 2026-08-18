@@ -25,7 +25,15 @@ MANIFEST
 **/.DS_Store
 .vscode/settings.json
 .vscode/settings.json
-**/*.ipynb
+
+# Course-project additions
+# Course material and the paper PDF are third-party content; not ours to redistribute.
+lectures/
+1809.05231v3.pdf
+# Model weights: large, regenerable from configs, and not evidence of anything.
+# The per-pair eval JSONs under results/ ARE kept -- they are the experimental record.
+**/*.pt
+results/logs/
 
 # Data files
 **/*.h5
