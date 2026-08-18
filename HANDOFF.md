@@ -64,7 +64,9 @@ branch it is scoring.
 - **2D bake-off complete**, all 14 runs, evaluated on 100 fixed test pairs (14 structures).
   Initial Dice 0.6747, identical across runs.
 - **Both datasets prepared**: `data/oasis2d.npz` (9.5 MB) and `data/oasis3d_cache/` (17 GB).
+  Note the 3D cache is gitignored — rebuild it on a new machine per §3, ~10 min.
 - **3D path smoke-tested end to end**: 160 ms/iter, eval 3.0 min per run, 33 structures.
+- **3D λ range-find complete: λ=0.1** (see §4). The default sweep bracket needs no change.
 
 | variant | best 2D run | Dice | Δ vs initial | folding % |
 |---|---|---|---|---|
@@ -82,7 +84,7 @@ ventral DC (−0.020/−0.016) and thalamus (−0.015/−0.013). Full tables via
 
 ### Not done
 
-- 3D runs for all three branches ← **in progress, see §4**
+- 3D matrix for all three branches ← **next: §4, one command, no code change needed**
 - 5-seed ensembles (branch C) — not started
 - Cross-attention evaluation stratified by initial misalignment (its actual hypothesis)
 - Colab notebook (2D, self-contained) — a submission requirement
@@ -166,22 +168,28 @@ parity or marginally slower per GPU, so scale by GPU count, not by card.
 
 ### 3D, all three branches (the current goal)
 
-**Step 1 — range-find λ first.** λ≈0.25 was tuned in 2D; the 3D smoothness term averages over
-three gradient components instead of two, so the optimum shifts. Do not skip this (trap 2).
+**Step 1 — λ range-find: DONE, λ=0.1.** No need to repeat it.
 
-```bash
-# split across two GPUs
-CUDA_VISIBLE_DEVICES=0 ./.venv/bin/python -m project.rangefind --ndim 3 \
-    --lambdas 0.05 0.1 0.25 --steps 3000 --eval-pairs 12 --out results/rangefind_3d_a.json &
-CUDA_VISIBLE_DEVICES=1 ./.venv/bin/python -m project.rangefind --ndim 3 \
-    --lambdas 0.5 1.0 2.0  --steps 3000 --eval-pairs 12 --out results/rangefind_3d_b.json &
-```
+Measured with `project.rangefind --ndim 3` (3000 steps, 12 val pairs, 33 structures, initial
+Dice 0.5363):
 
-~25 min. Pick the **knee**: the smallest λ whose folding is still near the paper's 0.2–0.4%,
-not simply the highest Dice.
+| λ | Dice | Δ vs initial | folding % | \|disp\| |
+|---|---|---|---|---|
+| 0.05 | 0.6438 | +0.1075 | 0.193 | 1.015 |
+| **0.10** | **0.6523** | **+0.1161** | **0.059** | 0.936 |
+| 0.25 | 0.6350 | +0.0988 | 0.006 | 0.808 |
+| 0.50 | 0.6282 | +0.0919 | 0.000 | 0.714 |
+| 1.00 | 0.6047 | +0.0684 | 0.000 | 0.607 |
 
-**Step 2 — the matrix.** Edit the `lambdas` default in `configs.build_matrix` to the three values
-bracketing the knee, then:
+A clean interior optimum at **λ=0.1**, so `build_matrix`'s default bracket of (0.05, 0.1, 0.25)
+straddles the peak and **needs no edit**. Note the optimum differs from 2D's 0.25 — confirming
+that λ does not transfer between dimensionalities (trap 2).
+
+Also note 3D improves Dice by **+0.116** against 2D's best of +0.080, from a lower starting point
+(0.5363 vs 0.6747). A single 2D slice cannot match anatomy that moves through the slice plane, so
+the 3D numbers are the ones to report.
+
+**Step 2 — run the matrix.**
 
 ```bash
 ./.venv/bin/python -m project.run_experiments --ndim 3 --gpus 0 1 --dry-run   # preview
