@@ -211,13 +211,82 @@ these are different configurations, so this scales perfectly with no gradient sy
 
 ### Ensembles (branch C, not yet started)
 
+Per-voxel variance across independently seeded models gives the uncertainty estimate, and for the
+λ-field it also answers whether the learned weight map is *reproducible* rather than an artefact
+of one initialisation — `analyse lambda-map` reports the across-seed correlation of the
+per-structure profile.
+
 ```bash
+# 2D (~30 min on 2 GPUs)
 ./.venv/bin/python -m project.run_experiments \
     --ensemble-of 2d_baseline_lam0.25_disp --seeds 0 1 2 3 4 --gpus 0 1
+
+# 3D (run after the matrix, so the base run exists)
+./.venv/bin/python -m project.run_experiments \
+    --ensemble-of 3d_lambda_field_lam0.1_disp --seeds 0 1 2 3 4 --gpus 0 1 2 3 4 5
 ```
 
-~30 min in 2D. Gives per-voxel uncertainty, and `analyse lambda-map` reports the across-seed
-correlation of the λ profile (i.e. whether the learned map is reproducible).
+---
+
+## 4b. Overnight run plan (6-GPU box)
+
+Ordered, unattended, resumable. Steps 1–2 are prerequisites; step 3 onward is the actual run.
+Every stage takes `--skip-existing`, so if anything dies the same command resumes it.
+
+**1. Rebuild the 3D cache (~15 min).** `data/` is gitignored and does not travel with the repo —
+see §3. This must finish before anything else.
+
+**2. Verify the environment (~1 min).**
+
+```bash
+./.venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+./.venv/bin/python -m pytest tests/ -q          # expect 155 passed, 1 skipped
+```
+
+If `cuda` is False, it is the CUDA-13 wheel trap — §5 trap 1.
+
+**3. The overnight chain.** λ=0.1 is already established (§4 step 1), so this needs no tuning:
+
+```bash
+GPUS="0 1 2 3 4 5"
+PY=./.venv/bin/python
+
+nohup sh -c "
+  $PY -m project.run_experiments --ndim 3 --gpus $GPUS --skip-existing &&
+  $PY -m project.run_experiments --ensemble-of 3d_baseline_lam0.1_disp \
+      --seeds 0 1 2 3 4 --gpus $GPUS &&
+  $PY -m project.run_experiments --ensemble-of 3d_lambda_field_lam0.1_disp \
+      --seeds 0 1 2 3 4 --gpus $GPUS
+" > overnight.log 2>&1 &
+```
+
+Do **not** pipe this to `head`/`tail` — that kills the orchestrator mid-queue (§5 trap 14).
+Redirect to a file, as above.
+
+| stage | runs | 6 GPUs | 2 GPUs |
+|---|---|---|---|
+| 3D matrix (baseline ×6, λ-field ×6, cross-attn ×2) | 14 | ~2.4 h | ~7.0 h |
+| baseline ensemble, 5 seeds | 5 | ~0.9 h | ~2.5 h |
+| λ-field ensemble, 5 seeds | 5 | ~0.9 h | ~2.5 h |
+| **total** | **24** | **~4.2 h** | **~12 h** |
+
+**4. Monitor.**
+
+```bash
+tail -f overnight.log                      # orchestrator progress
+ls results/3d_*/eval_test.json | wc -l     # completed runs
+grep val_dice results/logs/3d_*.log | tail # per-run training curves
+```
+
+**5. In the morning**, run the analyses in §4 Analysis below. Start with `tradeoff` for the
+overview, then `compare` for the paired statistics against the best baseline.
+
+**Not included and not runnable yet:** the cross-attention evaluation stratified by initial
+misalignment. That needs a pre-warping step (warp the moving image by a synthetic field of known
+magnitude, then register) which is **not implemented**. Cross-attention was significantly worse in
+2D, so this is the branch to drop if time is short.
+
+---
 
 ### Analysis
 
