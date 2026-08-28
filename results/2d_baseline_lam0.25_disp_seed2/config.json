@@ -1,0 +1,23 @@
+{
+  "name": "2d_baseline_lam0.25_disp_seed2",
+  "variant": "baseline",
+  "ndim": 2,
+  "lambda_reg": 0.25,
+  "integration_steps": 0,
+  "nb_features": [
+    16,
+    32,
+    32,
+    32,
+    32
+  ],
+  "steps": 20000,
+  "batch_size": 16,
+  "lr": 0.0001,
+  "seed": 2,
+  "val_every": 2000,
+  "val_pairs": 64,
+  "attn_heads": 4,
+  "data_path": "data/oasis2d.npz",
+  "output_root": "results"
+}

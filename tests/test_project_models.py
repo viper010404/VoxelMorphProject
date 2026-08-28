@@ -184,3 +184,93 @@ def test_unknown_variant_rejected():
     config.variant = 'nonsense'
     with pytest.raises(ValueError, match='unknown variant'):
         build_model(config)
+
+
+def _brain_mask_inputs(shape=(64, 64)):
+    """Skull-stripped-style inputs: a central positive box on an exactly-zero background."""
+    source = torch.zeros(1, 1, *shape)
+    target = torch.zeros(1, 1, *shape)
+    centre = tuple(slice(s // 4, 3 * s // 4) for s in shape)
+    source[(slice(None), slice(None)) + centre] = 0.8
+    target[(slice(None), slice(None)) + centre] = 0.9
+    return source, target
+
+
+def test_foreground_mask_is_the_union_of_both_images():
+    source = torch.tensor([[[[0.0, 0.5], [0.0, 0.0]]]])
+    target = torch.tensor([[[[0.0, 0.0], [0.3, 0.0]]]])
+    mask = VxmLambdaField._foreground_mask(source, target)
+    assert mask.tolist() == [[[[False, True], [True, False]]]]
+
+
+def test_masked_normalisation_gives_unit_mean_inside_the_mask():
+    """The brain's regularisation budget must equal the baseline's, exactly."""
+    raw = torch.randn(2, 1, 16, 16)
+    mask = torch.zeros(2, 1, 16, 16, dtype=torch.bool)
+    mask[:, :, 4:12, 4:12] = True
+    weights = VxmLambdaField._normalise_weights(raw, (0.5, 2.0), mask)
+    for sample in range(2):
+        inside = weights[sample][mask[sample]]
+        assert float(inside.mean()) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_masked_normalisation_closes_the_background_parking_evasion():
+    """
+    Weight parked in background air must not buy the brain a weaker regulariser.
+
+    Normalising over the whole image lets the field satisfy mean(w)=1 by loading the ~60% of
+    voxels that are background, where smoothing the displacement costs nothing, and dropping
+    every brain voxel to the floor. Measured on a trained 2D run that gave 1.38 outside the
+    brain against 0.42 inside. Masked normalisation must leave the brain at mean 1 regardless
+    of what the background does.
+    """
+    raw = torch.full((1, 1, 16, 16), -4.0)
+    mask = torch.zeros(1, 1, 16, 16, dtype=torch.bool)
+    mask[:, :, 6:10, 6:10] = True
+    raw[~mask] = 4.0                       # background driven to the ceiling
+
+    unmasked = VxmLambdaField._normalise_weights(raw, (0.5, 2.0), None)
+    masked = VxmLambdaField._normalise_weights(raw, (0.5, 2.0), mask)
+
+    # Whole-image normalisation: the brain is relaxed far below the baseline's budget.
+    assert float(unmasked[mask].mean()) < 0.5
+    # Masked normalisation: the brain gets exactly the baseline's budget back.
+    assert float(masked[mask].mean()) == pytest.approx(1.0, abs=1e-5)
+
+
+@pytest.mark.parametrize('ndim, shape', [(2, (64, 64)), (3, (32, 32, 32))])
+def test_mask_normalised_model_pins_the_brain_budget(ndim, shape):
+    """End to end through `forward`, the mean weight over brain voxels is 1."""
+    model = VxmLambdaField(ndim=ndim, mask_normalise=True)
+    source = torch.zeros(1, 1, *shape)
+    target = torch.zeros(1, 1, *shape)
+    centre = tuple(slice(s // 4, 3 * s // 4) for s in shape)
+    source[(slice(None), slice(None)) + centre] = 0.8
+    target[(slice(None), slice(None)) + centre] = 0.9
+
+    with torch.no_grad():
+        model.unet.out_layer.conv0.weight.mul_(1000.0)
+    lambda_map = model(source, target)['lambda_map']
+
+    mask = (source > 0) | (target > 0)
+    assert float(lambda_map[mask].mean()) == pytest.approx(1.0, abs=1e-4)
+
+
+def test_mask_normalisation_is_off_by_default():
+    """Earlier runs must reproduce exactly, so the default has to stay whole-image."""
+    assert VxmLambdaField(ndim=2).mask_normalise is False
+    assert ExperimentConfig(name='x', variant='lambda_field').lambda_mask_norm is False
+
+
+def test_build_model_passes_the_mask_normalisation_flag():
+    config = ExperimentConfig(name='x', variant='lambda_field', ndim=2, lambda_mask_norm=True)
+    assert build_model(config).mask_normalise is True
+
+
+def test_config_without_the_new_field_still_loads(tmp_path):
+    """`config.json` files written before the flag existed must still rebuild."""
+    import json
+    path = tmp_path / 'config.json'
+    path.write_text(json.dumps({'name': 'legacy', 'variant': 'lambda_field', 'ndim': 2}))
+    config = ExperimentConfig.load(path)
+    assert config.lambda_mask_norm is False

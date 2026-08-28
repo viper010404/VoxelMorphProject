@@ -1,0 +1,15 @@
+6 runs across gpus [0, 1]:
+  2d_lambda_field_lam0.05_disp_maskn  (variant=lambda_field lambda=0.05 int_steps=0 steps=20000)
+  2d_lambda_field_lam0.05_svf_maskn  (variant=lambda_field lambda=0.05 int_steps=7 steps=20000)
+  2d_lambda_field_lam0.1_disp_maskn  (variant=lambda_field lambda=0.1 int_steps=0 steps=20000)
+  2d_lambda_field_lam0.1_svf_maskn  (variant=lambda_field lambda=0.1 int_steps=7 steps=20000)
+  2d_lambda_field_lam0.25_disp_maskn  (variant=lambda_field lambda=0.25 int_steps=0 steps=20000)
+  2d_lambda_field_lam0.25_svf_maskn  (variant=lambda_field lambda=0.25 int_steps=7 steps=20000)
+[gpu0] 2d_lambda_field_lam0.05_disp_maskn: ok (286s, 1/6 done, 286s elapsed)
+[gpu1] 2d_lambda_field_lam0.05_svf_maskn: ok (534s, 2/6 done, 534s elapsed)
+[gpu0] 2d_lambda_field_lam0.1_disp_maskn: ok (277s, 3/6 done, 563s elapsed)
+[gpu0] 2d_lambda_field_lam0.25_disp_maskn: ok (274s, 4/6 done, 837s elapsed)
+[gpu1] 2d_lambda_field_lam0.1_svf_maskn: ok (530s, 5/6 done, 1065s elapsed)
+[gpu0] 2d_lambda_field_lam0.25_svf_maskn: ok (544s, 6/6 done, 1380s elapsed)
+
+completed 6/6 runs

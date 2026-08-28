@@ -1,0 +1,26 @@
+5 runs across gpus [0, 1, 4, 5]:
+  2d_baseline_lam0.25_disp_seed0  (variant=baseline lambda=0.25 int_steps=0 steps=20000)
+  2d_baseline_lam0.25_disp_seed1  (variant=baseline lambda=0.25 int_steps=0 steps=20000)
+  2d_baseline_lam0.25_disp_seed2  (variant=baseline lambda=0.25 int_steps=0 steps=20000)
+  2d_baseline_lam0.25_disp_seed3  (variant=baseline lambda=0.25 int_steps=0 steps=20000)
+  2d_baseline_lam0.25_disp_seed4  (variant=baseline lambda=0.25 int_steps=0 steps=20000)
+[gpu1] 2d_baseline_lam0.25_disp_seed1: ok (110s, 1/5 done, 110s elapsed)
+[gpu4] 2d_baseline_lam0.25_disp_seed2: ok (114s, 2/5 done, 114s elapsed)
+[gpu5] 2d_baseline_lam0.25_disp_seed3: ok (114s, 3/5 done, 114s elapsed)
+[gpu0] 2d_baseline_lam0.25_disp_seed0: ok (115s, 4/5 done, 115s elapsed)
+[gpu1] 2d_baseline_lam0.25_disp_seed4: ok (113s, 5/5 done, 224s elapsed)
+
+completed 5/5 runs
+5 runs across gpus [0, 1, 4, 5]:
+  2d_lambda_field_lam0.25_disp_seed0  (variant=lambda_field lambda=0.25 int_steps=0 steps=20000)
+  2d_lambda_field_lam0.25_disp_seed1  (variant=lambda_field lambda=0.25 int_steps=0 steps=20000)
+  2d_lambda_field_lam0.25_disp_seed2  (variant=lambda_field lambda=0.25 int_steps=0 steps=20000)
+  2d_lambda_field_lam0.25_disp_seed3  (variant=lambda_field lambda=0.25 int_steps=0 steps=20000)
+  2d_lambda_field_lam0.25_disp_seed4  (variant=lambda_field lambda=0.25 int_steps=0 steps=20000)
+[gpu1] 2d_lambda_field_lam0.25_disp_seed1: ok (115s, 1/5 done, 115s elapsed)
+[gpu0] 2d_lambda_field_lam0.25_disp_seed0: ok (117s, 2/5 done, 117s elapsed)
+[gpu4] 2d_lambda_field_lam0.25_disp_seed2: ok (119s, 3/5 done, 119s elapsed)
+[gpu5] 2d_lambda_field_lam0.25_disp_seed3: ok (119s, 4/5 done, 119s elapsed)
+[gpu1] 2d_lambda_field_lam0.25_disp_seed4: ok (114s, 5/5 done, 229s elapsed)
+
+completed 5/5 runs

@@ -58,3 +58,6 @@ package.json
 .codex/
 .pi/
 output/
+# Local virtualenv
+.venv/
+overnight.log

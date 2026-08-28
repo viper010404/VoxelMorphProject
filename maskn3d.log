@@ -1,0 +1,18 @@
+waiting for post-chain analysis (pid 3237118) ...
+analysis finished; starting 3D mask-norm sweep at Tue Aug 18 08:37:15 AM IDT 2026
+6 runs across gpus [0, 1, 4, 5, 6, 7]:
+  3d_lambda_field_lam0.05_disp_maskn  (variant=lambda_field lambda=0.05 int_steps=0 steps=20000)
+  3d_lambda_field_lam0.05_svf_maskn  (variant=lambda_field lambda=0.05 int_steps=7 steps=20000)
+  3d_lambda_field_lam0.1_disp_maskn  (variant=lambda_field lambda=0.1 int_steps=0 steps=20000)
+  3d_lambda_field_lam0.1_svf_maskn  (variant=lambda_field lambda=0.1 int_steps=7 steps=20000)
+  3d_lambda_field_lam0.25_disp_maskn  (variant=lambda_field lambda=0.25 int_steps=0 steps=20000)
+  3d_lambda_field_lam0.25_svf_maskn  (variant=lambda_field lambda=0.25 int_steps=7 steps=20000)
+[gpu6] 3d_lambda_field_lam0.25_disp_maskn: ok (3015s, 1/6 done, 3015s elapsed)
+[gpu4] 3d_lambda_field_lam0.1_disp_maskn: ok (3025s, 2/6 done, 3025s elapsed)
+[gpu0] 3d_lambda_field_lam0.05_disp_maskn: ok (3050s, 3/6 done, 3050s elapsed)
+[gpu7] 3d_lambda_field_lam0.25_svf_maskn: ok (3601s, 4/6 done, 3601s elapsed)
+[gpu1] 3d_lambda_field_lam0.05_svf_maskn: ok (3643s, 5/6 done, 3643s elapsed)
+[gpu5] 3d_lambda_field_lam0.1_svf_maskn: ok (3666s, 6/6 done, 3666s elapsed)
+
+completed 6/6 runs
+3D MASK-NORM SWEEP COMPLETE Tue Aug 18 09:38:22 AM IDT 2026

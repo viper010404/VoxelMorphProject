@@ -15,6 +15,7 @@ Usage
 """
 
 import os
+import sys
 import time
 import queue
 import argparse
@@ -134,12 +135,15 @@ def main() -> None:
     parser.add_argument('--data-path', type=str, default=None)
     parser.add_argument('--batch-size', type=int, default=None)
     parser.add_argument('--variants', type=str, nargs='+', default=None)
+    parser.add_argument('--lambda-mask-norm', action='store_true',
+                        help='normalise the lambda-field weight map within the brain mask '
+                             'instead of over the whole image')
     parser.add_argument('--ensemble-of', type=str, default=None,
                         help='run name to replicate across seeds instead of the full matrix')
     parser.add_argument('--seeds', type=int, nargs='+', default=[0, 1, 2, 3, 4])
-    parser.add_argument('--python', type=str,
-                        default='/tmp/claude-30957/-data-home-ido-falah-Personal-voxelmorph/'
-                                '3be20efa-bd75-4be9-ae32-16e52ae543e7/scratchpad/vxmenv/bin/python')
+    parser.add_argument('--python', type=str, default=sys.executable,
+                        help='interpreter for the child processes; defaults to the one running '
+                             'this launcher, so the matrix inherits the active virtualenv')
     parser.add_argument('--log-dir', type=Path, default=Path('results/logs'))
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--skip-existing', action='store_true',
@@ -152,7 +156,7 @@ def main() -> None:
         configs = ensemble_configs(base, seeds=args.seeds)
     else:
         kwargs = {'ndim': args.ndim, 'steps': args.steps, 'data_path': args.data_path,
-                  'batch_size': args.batch_size}
+                  'batch_size': args.batch_size, 'lambda_mask_norm': args.lambda_mask_norm}
         if args.variants:
             kwargs['variants'] = args.variants
         configs = build_matrix(**kwargs)

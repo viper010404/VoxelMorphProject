@@ -19,7 +19,7 @@ lambda_map : (B, 1, *spatial)
     Present for the lambda-field variant. Normalised to mean 1 (see `VxmLambdaField`).
 """
 
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
@@ -156,11 +156,13 @@ class VxmLambdaField(nn.Module):
         nb_features: Sequence[int] = (16, 32, 32, 32, 32),
         integration_steps: int = 0,
         weight_range: Tuple[float, float] = (0.5, 2.0),
+        mask_normalise: bool = False,
     ) -> None:
         super().__init__()
         self.ndim = ndim
         self.integration_steps = integration_steps
         self.weight_range = weight_range
+        self.mask_normalise = mask_normalise
 
         self.unet = ne.nn.models.BasicUNet(
             ndim=ndim,
@@ -178,8 +180,9 @@ class VxmLambdaField(nn.Module):
         features = self.unet(torch.cat([source, target], dim=1))
 
         velocity = self.flow_layer(features[:, :self.ndim])
+        mask = self._foreground_mask(source, target) if self.mask_normalise else None
         lambda_map = self._normalise_weights(
-            features[:, self.ndim:self.ndim + 1], self.weight_range
+            features[:, self.ndim:self.ndim + 1], self.weight_range, mask
         )
 
         if self.integration_steps > 0:
@@ -197,9 +200,35 @@ class VxmLambdaField(nn.Module):
         return outputs
 
     @staticmethod
+    def _foreground_mask(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Brain mask taken from the images themselves, as the union of the two.
+
+        neurite-OASIS is skull-stripped, so background is exactly zero and a positive-intensity
+        test recovers the brain without needing the segmentation. Deriving the mask from the
+        segmentation would leak label information into training and turn an unsupervised method
+        into a semi-supervised one; deriving it from the input image does not.
+
+        The union of source and target is used because a voxel that is brain in either image is
+        somewhere the deformation has real work to do.
+
+        Parameters
+        ----------
+        source, target : torch.Tensor
+            Input images of shape (B, 1, *spatial).
+
+        Returns
+        -------
+        torch.Tensor
+            Boolean mask of shape (B, 1, *spatial).
+        """
+        return (source > 0) | (target > 0)
+
+    @staticmethod
     def _normalise_weights(
         raw: torch.Tensor,
         weight_range: Tuple[float, float] = (0.5, 2.0),
+        mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Map raw network output to a bounded weight field with mean exactly 1.
@@ -213,23 +242,49 @@ class VxmLambdaField(nn.Module):
         Sigmoid is used rather than softplus precisely because it saturates at both ends, so no
         epsilon guard is needed and the field cannot run away in either direction.
 
+        **Normalising over the whole image leaves a second way out**, which bounding does not
+        close. Roughly 60% of an OASIS volume is background air, where the displacement field is
+        unconstrained by the similarity term and smoothing it costs the optimiser nothing. The
+        field can therefore satisfy `mean(w) = 1` by parking weight in the background and
+        relaxing every brain voxel to the floor. Measured on a trained 2D run: weight 1.38
+        outside the brain against 0.42 inside, a 3.3x split that nearly saturates the bound
+        ratio, leaving the brain at an effective lambda of 0.42 * lambda. The variant was then
+        not a redistribution of the baseline's budget but simply the baseline at a weaker
+        lambda, which is exactly what the measurements showed.
+
+        Passing `mask` normalises to mean 1 **within the mask**, pinning the brain's
+        regularisation budget to the baseline's and leaving the field free only to redistribute
+        smoothing between anatomical regions -- the hypothesis actually under test. Background
+        weight is then unconstrained but harmless: raising it only adds penalty, so the
+        optimiser drives it to the floor.
+
         Parameters
         ----------
         raw : torch.Tensor
             Unconstrained network output of shape (B, 1, *spatial).
         weight_range : tuple of float, optional
             `(low, high)` bounds applied before normalisation.
+        mask : torch.Tensor or None, optional
+            Region the mean is taken over. None normalises over the whole image.
 
         Returns
         -------
         torch.Tensor
             Weight field of the same shape, bounded and strictly positive, with per-sample
-            mean 1.
+            mean 1 over the mask (or over the image when no mask is given).
         """
         low, high = weight_range
         bounded = low + (high - low) * torch.sigmoid(raw)
         spatial_dims = tuple(range(1, bounded.dim()))
-        return bounded / bounded.mean(dim=spatial_dims, keepdim=True)
+
+        if mask is None:
+            return bounded / bounded.mean(dim=spatial_dims, keepdim=True)
+
+        weights = mask.to(bounded.dtype)
+        # clamp guards a degenerate all-background sample; a real one always has brain voxels.
+        count = weights.sum(dim=spatial_dims, keepdim=True).clamp(min=1.0)
+        masked_mean = (bounded * weights).sum(dim=spatial_dims, keepdim=True) / count
+        return bounded / masked_mean
 
 
 class VxmCrossAttention(nn.Module):
@@ -413,7 +468,7 @@ def build_model(config: ExperimentConfig) -> nn.Module:
     if config.variant == 'baseline':
         return VxmBaseline(**common)
     if config.variant == 'lambda_field':
-        return VxmLambdaField(**common)
+        return VxmLambdaField(mask_normalise=config.lambda_mask_norm, **common)
     if config.variant == 'cross_attn':
         return VxmCrossAttention(attn_heads=config.attn_heads, **common)
 

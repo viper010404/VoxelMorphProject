@@ -55,6 +55,10 @@ class ExperimentConfig:
         Number of validation pairs used for model selection.
     attn_heads : int
         Attention heads for the `cross_attn` variant.
+    lambda_mask_norm : bool
+        For `lambda_field`, normalise the weight map to mean 1 over the brain mask rather than
+        over the whole image. Off by default so earlier runs reproduce exactly; see
+        `models.VxmLambdaField._normalise_weights` for why it matters.
     data_path : str
         Path to the `.npz` cache.
     output_root : str
@@ -77,6 +81,7 @@ class ExperimentConfig:
     # costing only a few seconds per check.
     val_pairs: int = 64
     attn_heads: int = 4
+    lambda_mask_norm: bool = False
     data_path: str = 'data/oasis2d.npz'
     output_root: str = 'results'
 
@@ -118,6 +123,7 @@ def build_matrix(
     steps: Optional[int] = None,
     data_path: Optional[str] = None,
     batch_size: Optional[int] = None,
+    lambda_mask_norm: bool = False,
 ) -> List[ExperimentConfig]:
     """
     Build the sweep of configurations for the bake-off.
@@ -143,6 +149,9 @@ def build_matrix(
         Override the dataset cache path.
     batch_size : int or None, optional
         Override the batch size. Defaults to 16 in 2D and 1 in 3D.
+    lambda_mask_norm : bool, optional
+        Normalise the lambda-field weight map within the brain mask. Adds a `_maskn` suffix to
+        the run name so the two formulations never collide in `results/`.
 
     Returns
     -------
@@ -172,8 +181,9 @@ def build_matrix(
         for lam in sweep:
             for isteps in integration_steps:
                 tag = 'svf' if isteps > 0 else 'disp'
+                suffix = '_maskn' if (lambda_mask_norm and variant == 'lambda_field') else ''
                 configs.append(ExperimentConfig(
-                    name=f'{ndim}d_{variant}_lam{lam}_{tag}',
+                    name=f'{ndim}d_{variant}_lam{lam}_{tag}{suffix}',
                     variant=variant,
                     ndim=ndim,
                     lambda_reg=lam,
@@ -183,6 +193,7 @@ def build_matrix(
                     val_pairs=val_pairs,
                     val_every=val_every,
                     data_path=data_path,
+                    lambda_mask_norm=lambda_mask_norm,
                 ))
     return configs
 
