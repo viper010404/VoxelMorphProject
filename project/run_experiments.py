@@ -148,9 +148,10 @@ def main() -> None:
                              '3 is 8x downsampled, where a radius-2 window spans the full '
                              'displacement range')
     parser.add_argument('--cross-attn-window-radius', type=int, default=2)
-    parser.add_argument('--cascade-scales', type=int, nargs='+', default=None,
-                        help='cascade: downsampling factor per stage, finest last. "2 1" is '
-                             'coarse-to-fine, "1 1" is the same-resolution control')
+    parser.add_argument('--cascade-scales', '--stage-scales', dest='cascade_scales',
+                        type=int, nargs='+', default=None,
+                        help='coarse_to_fine: downsampling factor per stage, finest last. "2 1" '
+                             'is coarse-to-fine, "1 1" is the same-resolution control')
     parser.add_argument('--no-progressive', action='store_true',
                         help='pyramid: keep per-level flow heads but do not warp skips by the '
                              'accumulated field')
@@ -197,7 +198,12 @@ def main() -> None:
                              'instead of over the whole image')
     parser.add_argument('--ensemble-of', type=str, default=None,
                         help='run name to replicate across seeds instead of the full matrix')
-    parser.add_argument('--seeds', type=int, nargs='+', default=[0, 1, 2, 3, 4])
+    # Default None, not a list: this flag serves two paths. `--ensemble-of` wants the usual
+    # five members, while an ordinary sweep must stay single-seed unless seeds are asked for --
+    # a truthy default here silently multiplied every sweep by five.
+    parser.add_argument('--seeds', type=int, nargs='+', default=None,
+                        help='seeds to train. With --ensemble-of, defaults to 0-4; otherwise '
+                             'the matrix stays single-seed unless given')
     parser.add_argument('--python', type=str, default=sys.executable,
                         help='interpreter for the child processes; defaults to the one running '
                              'this launcher, so the matrix inherits the active virtualenv')
@@ -210,7 +216,7 @@ def main() -> None:
 
     if args.ensemble_of:
         base = ExperimentConfig.load(Path('results') / args.ensemble_of / 'config.json')
-        configs = ensemble_configs(base, seeds=args.seeds)
+        configs = ensemble_configs(base, seeds=args.seeds or (0, 1, 2, 3, 4))
     else:
         kwargs = {'ndim': args.ndim, 'steps': args.steps, 'data_path': args.data_path,
                   'batch_size': args.batch_size, 'lambda_mask_norm': args.lambda_mask_norm,
@@ -237,7 +243,7 @@ def main() -> None:
         if args.integration_steps is not None:
             kwargs['integration_steps'] = args.integration_steps
         if args.cascade_scales:
-            kwargs['cascade_scales'] = args.cascade_scales
+            kwargs['stage_scales'] = args.cascade_scales
         if args.variants:
             kwargs['variants'] = args.variants
         configs = build_matrix(**kwargs)

@@ -144,7 +144,7 @@ def lambda_structure_profile(
     """
     from project.configs import ExperimentConfig
     from project.data import OasisData, default_label_policy, fixed_pairs
-    from project.models import build_model
+    from project.models import build_model, forward_model
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     per_run: Dict[str, Dict[int, float]] = {}
@@ -153,7 +153,9 @@ def lambda_structure_profile(
     for run_dir in run_dirs:
         run_dir = Path(run_dir)
         config = ExperimentConfig.load(run_dir / 'config.json')
-        if config.variant != 'lambda_field':
+        # Both weighted variants expose `lambda_map`; the per-structure one simply has a map
+        # that is piecewise constant on the segmentation, so the same profile applies.
+        if config.variant not in ('lambda_field', 'lambda_structure'):
             continue
 
         data = OasisData(config.data_path, device=device if config.ndim == 2 else 'cpu')
@@ -167,11 +169,14 @@ def lambda_structure_profile(
         sums = {label: [] for label in labels}
         with torch.no_grad():
             for fixed_idx, moving_idx in pairs:
-                outputs = model(data.batch([moving_idx]).to(device),
-                                data.batch([fixed_idx]).to(device))
+                moving_seg = data.seg_batch([moving_idx]).to(device)
+                outputs = forward_model(model,
+                                        data.batch([moving_idx]).to(device),
+                                        data.batch([fixed_idx]).to(device),
+                                        moving_seg)
                 weight = outputs['lambda_map'].squeeze().cpu().numpy()
                 # The weight field is defined on the moving image's grid.
-                seg = data.seg_batch([moving_idx]).squeeze().cpu().numpy()
+                seg = moving_seg.squeeze().cpu().numpy()
                 for label in labels:
                     mask = seg == label
                     if mask.any():

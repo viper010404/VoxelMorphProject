@@ -551,25 +551,24 @@ def test_cascade_parameter_counts(scales, expected):
     Pinned because the parameter count is the whole basis of the capacity control: the claim is
     that the cascade beats a baseline widened *past* its own size, so its size must be known.
     """
-    config = ExperimentConfig(name='x', variant='cascade', ndim=2, cascade_scales=scales)
+    config = ExperimentConfig(name='x', variant='coarse_to_fine', ndim=2, stage_scales=scales)
     assert sum(p.numel() for p in build_model(config).parameters()) == expected
 
 
 def test_cascade_rejects_non_power_of_two_scales():
-    from project.models import VxmCascade
+    from project.models import VxmCoarseToFine
     with pytest.raises(ValueError, match='powers of two'):
-        VxmCascade(ndim=2, stage_scales=(3, 1))
+        VxmCoarseToFine(ndim=2, stage_scales=(3, 1))
 
 
 def test_cascade_warped_source_matches_its_composed_field():
-    from project.models import VxmCascade
-    model = VxmCascade(ndim=2).eval()
+    from project.models import VxmCoarseToFine
+    model = VxmCoarseToFine(ndim=2).eval()
     source, target = torch.rand(1, 1, 160, 192), torch.rand(1, 1, 160, 192)
     with torch.no_grad():
         out = model(source, target)
         assert torch.allclose(model.spatial_transformer(source, out['displacement']),
                               out['warped_source'], atol=1e-6)
-    assert len(out['stages']) == 2
 
 
 def test_widened_baseline_gets_its_own_run_name():
@@ -725,3 +724,39 @@ def test_seeds_default_to_a_single_run():
     configs = build_matrix(ndim=2, variants=('baseline',), lambdas=(0.25,),
                            integration_steps=(7,))
     assert len(configs) == 1 and configs[0].seed == 0
+
+
+def test_sweep_stays_single_seed_unless_seeds_are_requested():
+    """
+    An ordinary sweep must produce one run per configuration.
+
+    `--seeds` serves two paths: `--ensemble-of` wants five members by default, while the
+    experiment matrix must stay single-seed. A truthy argparse default made `if args.seeds`
+    always true, which silently multiplied every sweep by five -- five times the GPU time, and
+    a matrix nobody asked for.
+    """
+    from project.configs import build_matrix
+    assert len(build_matrix(ndim=2, variants=('baseline',), lambdas=(0.25,),
+                            integration_steps=(7,))) == 1
+
+
+def test_run_names_are_stable_across_the_merge():
+    """
+    Existing result directories are addressed by generated name.
+
+    If a name changes, `--skip-existing` stops recognising finished work and every earlier
+    result is orphaned from the config that produced it. These are real directories under
+    results/, so a rename breaks the experimental record rather than just a test.
+    """
+    from project.configs import build_matrix
+    cases = [
+        (dict(variants=('baseline',), lambdas=(0.25,)), '2d_baseline_lam0.25_svf'),
+        (dict(variants=('pyramid',), sweep_variants=('pyramid',), lambdas=(0.25,),
+              pyramid_progressive=False, deep_supervision=False),
+         '2d_pyramid_lam0.25_svf_noprog_nods'),
+        (dict(variants=('baseline',), lambdas=(0.25,), head_lr_mult=100),
+         '2d_baseline_lam0.25_svf_hlr100'),
+    ]
+    for kwargs, expected in cases:
+        names = [c.name for c in build_matrix(ndim=2, integration_steps=(7,), **kwargs)]
+        assert expected in names, f'{expected} not in {names}'

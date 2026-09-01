@@ -180,6 +180,10 @@ class PairSampler:
         """
         Draw one batch.
 
+        The subject indices behind the batch are kept on `self.source_idx` / `self.target_idx`
+        so a caller that also needs the segmentations (the `lambda_structure` variant) can fetch
+        them without a second draw from the RNG.
+
         Returns
         -------
         tuple of torch.Tensor
@@ -194,6 +198,8 @@ class PairSampler:
             target_idx[collision] = self.rng.choice(self.indices, size=int(collision.sum()))
             collision = source_idx == target_idx
 
+        self.source_idx = source_idx
+        self.target_idx = target_idx
         return self.data.batch(source_idx), self.data.batch(target_idx)
 
 

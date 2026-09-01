@@ -15,8 +15,8 @@ from typing import List, Optional, Sequence
 
 DEFAULT_FEATURES = (16, 32, 32, 32, 32)
 
-VARIANTS = ('baseline', 'lambda_field', 'cross_attn', 'pyramid', 'cascade', 'fathead',
-            'msf')
+VARIANTS = ('baseline', 'lambda_field', 'lambda_structure', 'cross_attn',
+            'cross_attn_gated', 'coarse_to_fine', 'pyramid', 'fathead', 'msf')
 
 
 @dataclass
@@ -76,7 +76,7 @@ class ExperimentConfig:
         suffix to the run name.
     cross_attn_window_radius : int
         Neighbourhood radius in tokens for that attention.
-    cascade_scales : sequence of int
+    stage_scales : sequence of int
         For `cascade`, the downsampling factor each stage runs at, finest last. (2, 1) is
         coarse-to-fine; (1, 1) is the same-resolution control that isolates iteration from
         multi-resolution. Adds a `_c2f<scales>` suffix.
@@ -96,6 +96,34 @@ class ExperimentConfig:
         For `lambda_field`, normalise the weight map to mean 1 over the brain mask rather than
         over the whole image. Off by default so earlier runs reproduce exactly; see
         `models.VxmLambdaField._normalise_weights` for why it matters.
+    stage_scales : sequence of int
+        Downsampling factor per stage for `coarse_to_fine`, coarsest first. (2, 1) is the
+        coarse-to-fine cascade; (1, 1) is the same-resolution control that holds capacity fixed.
+    bidirectional : bool
+        Train each pair in both directions with the same weights, adding the reverse similarity
+        term. Costs a second forward pass but no parameters.
+    beta_inv : float
+        Weight on the inverse-consistency penalty. Requires `bidirectional`; 0 disables it.
+    lambda_fold : float
+        Weight on the anti-folding penalty `relu(margin - |J|)`, which targets non-invertible
+        deformation directly rather than relying on the diffusion term to discourage it
+        indirectly. 0 disables it and reproduces the paper's objective. Orthogonal to `variant`.
+    fold_margin : float
+        Determinant value the anti-folding penalty pushes above. 0 penalises only actual folding.
+    structure_lambda : sequence of float or None
+        Fixed per-structure weights for `lambda_structure`, bypassing the learned head. Used for
+        the control experiments: freezing the learned allocation, and shuffling it across
+        structures to test whether the *specific* assignment matters or merely the fact of
+        having some heterogeneity. None means learn it.
+    weight_range : sequence of float
+        `(low, high)` bounds on the learned weight before mean-normalisation, for the weighted
+        variants. The *ratio* caps how strongly regularisation may be redistributed; the default
+        4:1 was chosen for `lambda_field` and is saturated by `lambda_structure`, so widening it
+        is a live experiment rather than a tuning detail.
+    n_labels : int
+        Size of the per-structure weight table for the `lambda_structure` variant. Must exceed
+        the largest label id present, which includes background: the 2D `seg24` holds ids 0-24
+        (25 slots) and the 3D `seg35` holds ids 0-35 (36 slots). Verified at forward time.
     data_path : str
         Path to the `.npz` cache.
     output_root : str
@@ -131,9 +159,16 @@ class ExperimentConfig:
     cross_attn_window_level: int = -1
     cross_attn_window_radius: int = 2
     misalign_magnitude: float = 0.0
-    cascade_scales: Sequence[int] = (2, 1)
     pyramid_progressive: bool = True
     deep_supervision: bool = True
+    structure_lambda: Optional[Sequence[float]] = None
+    stage_scales: Sequence[int] = (2, 1)
+    bidirectional: bool = False
+    beta_inv: float = 0.0
+    lambda_fold: float = 0.0
+    fold_margin: float = 0.0
+    weight_range: Sequence[float] = (0.5, 2.0)
+    n_labels: int = 25
     data_path: str = 'data/oasis2d.npz'
     output_root: str = 'results'
 
@@ -143,7 +178,8 @@ class ExperimentConfig:
         if self.ndim not in (2, 3):
             raise ValueError(f'ndim must be 2 or 3, got {self.ndim}')
         self.nb_features = tuple(self.nb_features)
-        self.cascade_scales = tuple(self.cascade_scales)
+        self.weight_range = tuple(self.weight_range)
+        self.stage_scales = tuple(self.stage_scales)
 
     @property
     def output_dir(self) -> Path:
@@ -183,9 +219,10 @@ def build_matrix(
     cross_attn_window_radius: int = 2,
     nb_features: Optional[Sequence[int]] = None,
     misalign_magnitude: float = 0.0,
-    cascade_scales: Sequence[int] = (2, 1),
+    stage_scales: Sequence[int] = (2, 1),
     pyramid_progressive: bool = True,
     deep_supervision: bool = True,
+    n_labels: Optional[int] = None,
     test_every: int = 0,
     head_hidden: Optional[int] = None,
     head_kernel: int = 3,
@@ -252,6 +289,8 @@ def build_matrix(
     if nb_features is None:
         nb_features = DEFAULT_FEATURES
     nb_features = tuple(nb_features)
+    if n_labels is None:
+        n_labels = 25 if ndim == 2 else 36
 
     # A 3D validation pass costs ~1.8 s per pair (Dice over 33 structures on 6.9M voxels, plus
     # the Jacobian determinant), so the 2D settings would add ~19 min to every run. Validate
@@ -287,8 +326,8 @@ def build_matrix(
                 # namespace precisely because they are meant to be compared against it.
                 if tuple(nb_features) != DEFAULT_FEATURES[:len(nb_features)]:
                     suffix += '_f' + '-'.join(str(width) for width in nb_features)
-                if variant == 'cascade':
-                    suffix += '_c2f' + ''.join(str(x) for x in cascade_scales)
+                if variant == 'coarse_to_fine':
+                    suffix += '_c2f' + ''.join(str(x) for x in stage_scales)
                 if variant == 'fathead':
                     # The head's width and kernel are the quantities under test here, so they
                     # have to be in the directory name or the sweep overwrites itself.
@@ -315,38 +354,39 @@ def build_matrix(
                 if steps != 20000:
                     suffix += f'_s{steps // 1000}k'
                 for seed in seeds:
-                  # Seed 0 keeps the bare name so an existing single-seed run is reused as a
-                  # member of its own ensemble rather than retrained under a new name.
-                  seed_suffix = '' if seed == 0 else f'_seed{seed}'
-                  configs.append(ExperimentConfig(
-                      seed=seed,
-                      name=f'{ndim}d_{variant}_lam{lam}_{tag}{suffix}{seed_suffix}',
-                      variant=variant,
-                      ndim=ndim,
-                      nb_features=nb_features,
-                      misalign_magnitude=misalign_magnitude,
-                      cascade_scales=cascade_scales,
-                      pyramid_progressive=pyramid_progressive,
-                      deep_supervision=deep_supervision,
-                      lambda_reg=lam,
-                      integration_steps=isteps,
-                      steps=steps,
-                      batch_size=batch_size,
-                      val_pairs=val_pairs,
-                      val_every=val_every,
-                      test_every=test_every,
-                      head_hidden=head_hidden,
-                      head_kernel=head_kernel,
-                      head_image_skip=head_image_skip,
-                      msf_per_level=msf_per_level,
-                      head_lr_mult=head_lr_mult,
-                      data_path=data_path,
-                      lambda_mask_norm=lambda_mask_norm,
-                      cross_attn_target_skips=cross_attn_target_skips,
-                      cross_attn_use_attention=cross_attn_use_attention,
-                      cross_attn_window_level=cross_attn_window_level,
-                      cross_attn_window_radius=cross_attn_window_radius,
-                  ))
+                    # Seed 0 keeps the bare name so an existing single-seed run is reused as a
+                    # member of its own ensemble rather than retrained under a new name.
+                    seed_suffix = '' if seed == 0 else f'_seed{seed}'
+                    configs.append(ExperimentConfig(
+                        seed=seed,
+                        name=f'{ndim}d_{variant}_lam{lam}_{tag}{suffix}{seed_suffix}',
+                        variant=variant,
+                        ndim=ndim,
+                        nb_features=nb_features,
+                        misalign_magnitude=misalign_magnitude,
+                        stage_scales=stage_scales,
+                        pyramid_progressive=pyramid_progressive,
+                        deep_supervision=deep_supervision,
+                        lambda_reg=lam,
+                        integration_steps=isteps,
+                        steps=steps,
+                        batch_size=batch_size,
+                        val_pairs=val_pairs,
+                        val_every=val_every,
+                        test_every=test_every,
+                        head_hidden=head_hidden,
+                        head_kernel=head_kernel,
+                        head_image_skip=head_image_skip,
+                        msf_per_level=msf_per_level,
+                        head_lr_mult=head_lr_mult,
+                        data_path=data_path,
+                        lambda_mask_norm=lambda_mask_norm,
+                        cross_attn_target_skips=cross_attn_target_skips,
+                        cross_attn_use_attention=cross_attn_use_attention,
+                        cross_attn_window_level=cross_attn_window_level,
+                        cross_attn_window_radius=cross_attn_window_radius,
+                        n_labels=n_labels,
+                    ))
     return configs
 
 
