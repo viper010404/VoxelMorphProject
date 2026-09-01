@@ -31,9 +31,14 @@ MANIFEST
 lectures/
 1809.05231v3.pdf
 # Model weights: large, regenerable from configs, and not evidence of anything.
-# The per-pair eval JSONs under results/ ARE kept -- they are the experimental record.
 **/*.pt
 results/logs/
+
+# Per-run JSONs under results/. These were tracked as the experimental record, but at ~450
+# runs the per-pair rows are 75 MB and every sweep adds more, which swamps code review.
+# Already-tracked files stay tracked: untracking them would delete them from every other
+# checkout on the next pull. Aggregated comparisons at results/*.json remain tracked.
+results/*/*.json
 
 # Data files
 **/*.h5

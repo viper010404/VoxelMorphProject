@@ -1,0 +1,38 @@
+{
+  "baseline": "3d_baseline_lam0.05_svf_s80k",
+  "split": "test",
+  "comparisons": {
+    "3d_pyramid_lam0.05_svf_nods_s80k": {
+      "dice": {
+        "n": 100,
+        "baseline_mean": 0.8053614952914135,
+        "candidate_mean": 0.8143861728179749,
+        "delta_mean": 0.009024677526561137,
+        "delta_std": 0.008464248112292513,
+        "improved_pairs": 87,
+        "t_p": 3.9516916749137016e-18,
+        "wilcoxon_p": 7.725188665215539e-14
+      },
+      "folding_fraction": {
+        "n": 100,
+        "baseline_mean": 1.1189778645833334e-07,
+        "candidate_mean": 1.453218005952381e-09,
+        "delta_mean": -1.1044456845238096e-07,
+        "delta_std": 7.226702351255932e-07,
+        "improved_pairs": 7,
+        "t_p": 0.12963079928026247,
+        "wilcoxon_p": 0.024353118662253637
+      },
+      "inverse_consistency": {
+        "n": 100,
+        "baseline_mean": 0.02228905977681279,
+        "candidate_mean": 0.026767612155526876,
+        "delta_mean": 0.004478552378714085,
+        "delta_std": 0.0036743066953522866,
+        "improved_pairs": 0,
+        "t_p": 2.028508562099974e-21,
+        "wilcoxon_p": 3.896559845095909e-18
+      }
+    }
+  }
+}
