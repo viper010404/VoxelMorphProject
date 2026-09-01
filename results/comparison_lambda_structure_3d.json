@@ -1,0 +1,70 @@
+{
+  "baseline": "3d_baseline_lam0.05_svf",
+  "split": "test",
+  "comparisons": {
+    "3d_lambda_structure_lam0.1_svf": {
+      "dice": {
+        "n": 100,
+        "baseline_mean": 0.7976714739574642,
+        "candidate_mean": 0.7797078674691954,
+        "delta_mean": -0.01796360648826888,
+        "delta_std": 0.019639924939807124,
+        "improved_pairs": 12,
+        "t_p": 7.951863514248394e-15,
+        "wilcoxon_p": 2.3129702605871595e-12
+      },
+      "folding_fraction": {
+        "n": 100,
+        "baseline_mean": 2.3251488095238096e-08,
+        "candidate_mean": 3.197079613095238e-08,
+        "delta_mean": 8.719308035714286e-09,
+        "delta_std": 2.746590186221091e-07,
+        "improved_pairs": 2,
+        "t_p": 0.7515636347945517,
+        "wilcoxon_p": 1.0
+      },
+      "inverse_consistency": {
+        "n": 100,
+        "baseline_mean": 0.018856738209724427,
+        "candidate_mean": 0.01723854969255626,
+        "delta_mean": -0.0016181885171681642,
+        "delta_std": 0.0014187288350204809,
+        "improved_pairs": 90,
+        "t_p": 9.680364112677111e-20,
+        "wilcoxon_p": 1.1020511023218772e-16
+      }
+    },
+    "3d_lambda_field_lam0.1_svf": {
+      "dice": {
+        "n": 100,
+        "baseline_mean": 0.7976714739574642,
+        "candidate_mean": 0.7907841471641004,
+        "delta_mean": -0.006887326793364017,
+        "delta_std": 0.005612464135505681,
+        "improved_pairs": 8,
+        "t_p": 1.3527332501236364e-21,
+        "wilcoxon_p": 6.166069759616455e-17
+      },
+      "folding_fraction": {
+        "n": 100,
+        "baseline_mean": 2.3251488095238096e-08,
+        "candidate_mean": 1.5549432663690474e-07,
+        "delta_mean": 1.3224283854166666e-07,
+        "delta_std": 7.997288229418917e-07,
+        "improved_pairs": 1,
+        "t_p": 0.1013772601616242,
+        "wilcoxon_p": 0.015206995278918977
+      },
+      "inverse_consistency": {
+        "n": 100,
+        "baseline_mean": 0.018856738209724427,
+        "candidate_mean": 0.023420458622276784,
+        "delta_mean": 0.004563720412552357,
+        "delta_std": 0.0012725483523644012,
+        "improved_pairs": 0,
+        "t_p": 1.5803271109159011e-58,
+        "wilcoxon_p": 3.896559845095909e-18
+      }
+    }
+  }
+}

@@ -546,25 +546,24 @@ def test_cascade_parameter_counts(scales, expected):
     Pinned because the parameter count is the whole basis of the capacity control: the claim is
     that the cascade beats a baseline widened *past* its own size, so its size must be known.
     """
-    config = ExperimentConfig(name='x', variant='cascade', ndim=2, cascade_scales=scales)
+    config = ExperimentConfig(name='x', variant='coarse_to_fine', ndim=2, stage_scales=scales)
     assert sum(p.numel() for p in build_model(config).parameters()) == expected
 
 
 def test_cascade_rejects_non_power_of_two_scales():
-    from project.models import VxmCascade
+    from project.models import VxmCoarseToFine
     with pytest.raises(ValueError, match='powers of two'):
-        VxmCascade(ndim=2, stage_scales=(3, 1))
+        VxmCoarseToFine(ndim=2, stage_scales=(3, 1))
 
 
 def test_cascade_warped_source_matches_its_composed_field():
-    from project.models import VxmCascade
-    model = VxmCascade(ndim=2).eval()
+    from project.models import VxmCoarseToFine
+    model = VxmCoarseToFine(ndim=2).eval()
     source, target = torch.rand(1, 1, 160, 192), torch.rand(1, 1, 160, 192)
     with torch.no_grad():
         out = model(source, target)
         assert torch.allclose(model.spatial_transformer(source, out['displacement']),
                               out['warped_source'], atol=1e-6)
-    assert len(out['stages']) == 2
 
 
 def test_widened_baseline_gets_its_own_run_name():

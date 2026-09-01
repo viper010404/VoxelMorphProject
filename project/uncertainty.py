@@ -40,7 +40,7 @@ import torch
 from project.configs import ExperimentConfig
 from project.data import OasisData, default_label_policy, fixed_pairs
 from project.metrics import dice_per_structure, folding, mean_dice, warp_segmentation
-from project.models import build_model
+from project.models import build_model, forward_model
 
 
 def load_members(run_dirs: Sequence[Path], device: str, checkpoint: str = 'best.pt'):
@@ -157,8 +157,12 @@ def ensemble_uncertainty(
     for pair_index, (fixed_idx, moving_idx) in enumerate(pairs):
         source = data.batch([moving_idx]).to(device)
         target = data.batch([fixed_idx]).to(device)
+        moving_seg_gpu = data.seg_batch([moving_idx]).to(device)
 
-        fields = torch.stack([model(source, target)['displacement'] for model in models])
+        fields = torch.stack([
+            forward_model(model, source, target, moving_seg_gpu)['displacement']
+            for model in models
+        ])
 
         # Disagreement per voxel: standard deviation across members of each displacement
         # component, combined over components as a Euclidean norm so the result is one scalar
