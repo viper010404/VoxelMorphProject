@@ -19,6 +19,7 @@ lambda_map : (B, 1, *spatial)
     Present for the lambda-field variant. Normalised to mean 1 (see `VxmLambdaField`).
 """
 
+import math
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import torch
@@ -28,6 +29,7 @@ import neurite as ne
 import voxelmorph as vxm
 
 from project.configs import ExperimentConfig
+from project.losses import compose_displacements
 
 
 def _init_flow_layer(ndim: int, flow_initializer: float = 1e-5) -> nn.Module:
@@ -287,6 +289,211 @@ class VxmLambdaField(nn.Module):
         return bounded / masked_mean
 
 
+class VxmLambdaStructure(nn.Module):
+    """
+    VoxelMorph with per-structure regularisation weight.
+
+    `VxmLambdaField` gives the weight map one degree of freedom per voxel, and the measured
+    per-structure Dice showed it using that freedom coherently by region -- better on the
+    lateral ventricles and brain stem, worse on putamen and thalamus. This variant grants only
+    the freedom that result actually used: the head emits `n_labels` scalars (25 in 2D, 36 in
+    3D, background included), which are broadcast onto the voxel grid through the source segmentation. The
+    hypothesis is that "ventricles deform, brain stem does not" needs 24 numbers, not 30k, and
+    that the smaller hypothesis class generalises where the per-voxel one did not.
+
+    The weight map is normalised to mean 1 **over the brain mask**, exactly as in the
+    mask-normalised lambda-field, so `lambda_reg` remains the average regularisation strength
+    and the comparison isolates allocation from strength. Normalisation is applied to the voxel
+    map rather than to the structure vector because structures differ enormously in size: an
+    unweighted mean over structures would let the tiny ones dominate the budget.
+
+    **This variant is semi-supervised.** The baseline and the lambda-field are trained without
+    labels; this one consumes the source segmentation at training time. It is therefore not a
+    like-for-like replacement for them, and a win here does not transfer to a setting where
+    segmentations are unavailable at registration time. Reported numbers must carry that caveat.
+
+    Parameters
+    ----------
+    ndim : int
+        Spatial dimensionality.
+    n_labels : int
+        Size of the per-structure weight table; must exceed the largest label id present
+        (25 in 2D, 36 in 3D -- both include background as id 0).
+    nb_features : sequence of int
+        UNet features per level.
+    integration_steps : int
+        Scaling-and-squaring steps; 0 for a plain displacement field.
+    weight_range : tuple of float
+        Lower and upper bound on the per-structure weight before mean-normalisation.
+    """
+
+    def __init__(
+        self,
+        ndim: int,
+        n_labels: int,
+        nb_features: Sequence[int] = (16, 32, 32, 32, 32),
+        integration_steps: int = 0,
+        weight_range: Tuple[float, float] = (0.5, 2.0),
+        structure_lambda: Optional[Sequence[float]] = None,
+    ) -> None:
+        super().__init__()
+        self.ndim = ndim
+        self.integration_steps = integration_steps
+        self.weight_range = weight_range
+        self.n_labels = n_labels
+        self.fixed = structure_lambda is not None
+
+        # With a fixed allocation there is no weight head at all, so the UNet is exactly the
+        # baseline's. That makes the control a strictly *smaller* model than the learned
+        # variant -- if it matches, the learned head is provably doing no work.
+        self.unet = ne.nn.models.BasicUNet(
+            ndim=ndim,
+            in_channels=2,
+            out_channels=ndim if self.fixed else ndim + n_labels,
+            nb_features=nb_features,
+        )
+        if self.fixed:
+            if len(structure_lambda) != n_labels:
+                raise ValueError(f'structure_lambda must have {n_labels} entries, '
+                                 f'got {len(structure_lambda)}')
+            self.register_buffer('fixed_lambda',
+                                 torch.tensor(list(structure_lambda), dtype=torch.float32))
+        self.flow_layer = _init_flow_layer(ndim)
+        self.spatial_transformer = vxm.nn.modules.SpatialTransformer()
+        if integration_steps > 0:
+            self.integrator = vxm.nn.modules.IntegrateVelocityField(steps=integration_steps)
+
+    def forward(
+        self,
+        source: torch.Tensor,
+        target: torch.Tensor,
+        seg: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Register `source` to `target`.
+
+        Parameters
+        ----------
+        source, target : torch.Tensor
+            Input images of shape (B, 1, *spatial).
+        seg : torch.Tensor or None
+            Segmentation of the *source* of shape (B, 1, *spatial), integer labels. The
+            smoothness penalty lives on the source grid, so the source's labels are the ones
+            that say which structure each penalised voxel belongs to.
+
+        Returns
+        -------
+        dict
+            Keys: displacement, warped_source, lambda_map, structure_lambda.
+        """
+        if seg is None:
+            raise ValueError('VxmLambdaStructure requires the source segmentation')
+
+        features = self.unet(torch.cat([source, target], dim=1))
+
+        velocity = self.flow_layer(features[:, :self.ndim])
+
+        if self.fixed:
+            structure_lambda = self.fixed_lambda.unsqueeze(0).expand(source.shape[0], -1)
+        else:
+            # Global average pool the weight channels: the head predicts one scalar per
+            # structure, not a spatial field. This is the whole point of the variant --
+            # n_labels degrees of freedom instead of one per voxel.
+            spatial_dims = tuple(range(2, features.dim()))
+            pooled = features[:, self.ndim:self.ndim + self.n_labels].mean(dim=spatial_dims)
+
+            low, high = self.weight_range
+            structure_lambda = low + (high - low) * torch.sigmoid(pooled)
+        lambda_map = self._scatter_to_voxels(structure_lambda, seg)
+
+        # Normalise the *voxel* map, not the structure vector. Structures differ enormously in
+        # size (background dominates), so a plain mean over structures would not hold the
+        # regularisation budget equal to the baseline's -- and an equal budget is what makes the
+        # comparison a test of allocation rather than of strength.
+        mask = (source > 0) | (target > 0)
+        lambda_map = self._normalise_to_unit_mean(lambda_map, mask)
+
+        if self.integration_steps > 0:
+            displacement = self.integrator(velocity)
+        else:
+            displacement = velocity
+
+        outputs = {
+            'displacement': displacement,
+            'warped_source': self.spatial_transformer(source, displacement),
+            'lambda_map': lambda_map,
+            'structure_lambda': structure_lambda,
+        }
+        if self.integration_steps > 0:
+            outputs['velocity'] = velocity
+        return outputs
+
+    def _scatter_to_voxels(
+        self,
+        structure_lambda: torch.Tensor,
+        seg: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Broadcast per-structure weights onto the voxel grid.
+
+        Parameters
+        ----------
+        structure_lambda : torch.Tensor
+            Per-structure weights of shape (B, n_labels).
+        seg : torch.Tensor
+            Segmentation of shape (B, 1, *spatial) holding integer label ids.
+
+        Returns
+        -------
+        torch.Tensor
+            Weight map of shape (B, 1, *spatial), differentiable w.r.t. `structure_lambda`.
+        """
+        batch = seg.shape[0]
+        spatial = seg.shape[2:]
+
+        index = seg.reshape(batch, -1).long()
+
+        # Label ids come straight from the NIfTI with no remapping, so `n_labels` must cover the
+        # largest id actually present. Clamping instead would silently merge every structure
+        # above the bound into one weight and quietly invalidate the experiment, so this fails
+        # loudly rather than returning a plausible wrong answer.
+        largest = int(index.max())
+        if largest >= self.n_labels:
+            raise ValueError(
+                f'segmentation contains label id {largest} but n_labels={self.n_labels}; '
+                f'set n_labels > {largest}'
+            )
+
+        gathered = structure_lambda.gather(1, index)
+        return gathered.reshape(batch, 1, *spatial)
+
+    @staticmethod
+    def _normalise_to_unit_mean(
+        weights: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Rescale a weight map to mean 1 within the brain mask.
+
+        Parameters
+        ----------
+        weights : torch.Tensor
+            Positive weight map of shape (B, 1, *spatial).
+        mask : torch.Tensor
+            Boolean brain mask of the same shape.
+
+        Returns
+        -------
+        torch.Tensor
+            `weights` rescaled so its masked per-sample mean is 1.
+        """
+        spatial_dims = tuple(range(1, weights.dim()))
+        indicator = mask.to(weights.dtype)
+        count = indicator.sum(dim=spatial_dims, keepdim=True).clamp(min=1.0)
+        masked_mean = (weights * indicator).sum(dim=spatial_dims, keepdim=True) / count
+        return weights / masked_mean
+
+
 class VxmCrossAttention(nn.Module):
     """
     VoxelMorph with a two-stream encoder and cross-attention at the bottleneck.
@@ -445,6 +652,325 @@ class VxmCrossAttention(nn.Module):
         return outputs
 
 
+class VxmCrossAttentionGated(nn.Module):
+    """
+    Cross-attention added to the baseline as a zero-initialised gated residual.
+
+    `VxmCrossAttention` loses 6% Dice in 2D and 13% in 3D, worse than the baseline on 100/100
+    pairs. The diagnosis is structural rather than a matter of tuning: that variant *replaces*
+    the baseline's input path with a two-stream encoder whose streams each see a single image,
+    and its bottleneck residual is followed by a LayerNorm, which rescales the representation.
+    There is consequently **no initialisation at which it equals the baseline** -- it begins by
+    damaging a working model and has to climb back, and it never does.
+
+    This variant fixes exactly that, and changes nothing else:
+
+    * The main path is a plain UNet on `cat(source, target)` -- the baseline's own formulation,
+      and the same `BasicUNet` the lambda-field variant uses, so the anchor is like-for-like.
+    * The attention branch is a *second* pass of the **same encoder weights** over the swapped
+      input `cat(target, source)`. Sharing the encoder means the branch adds no encoder
+      parameters, so a measured difference is attributable to the attention and not to capacity.
+      The swap gives a genuinely different view -- the pair seen from the target's side -- which
+      is what makes attention between the two streams meaningful rather than self-attention.
+    * The two bottlenecks are combined as `h = h_forward + tanh(gate) * attend(h_forward,
+      h_swapped)` with `gate` a learned scalar **initialised to zero**.
+
+    At initialisation `tanh(0) = 0`, so the attention branch contributes nothing and the model is
+    bit-for-bit the plain UNet path. Gradient descent opens the gate only if attention earns it,
+    and can close it again. The failure mode of the original -- pay a large upfront cost for a
+    mechanism that may not help -- is therefore impossible by construction. This is the
+    ReZero/LayerScale trick, used here for the reason it was invented.
+
+    The decoder consumes the **forward** stream's skips, since the field is defined on the source
+    grid.
+
+    `gate` is reported in the output dict: if the trained value stays near zero, the honest
+    reading is that cross-attention is not useful for this task, and that is a publishable
+    negative result rather than a failed run.
+
+    Parameters
+    ----------
+    ndim : int
+        Spatial dimensionality.
+    nb_features : sequence of int
+        UNet features per level.
+    integration_steps : int
+        Scaling-and-squaring steps; 0 for a plain displacement field.
+    attn_heads : int
+        Number of attention heads.
+    """
+
+    def __init__(
+        self,
+        ndim: int,
+        nb_features: Sequence[int] = (16, 32, 32, 32, 32),
+        integration_steps: int = 0,
+        attn_heads: int = 4,
+    ) -> None:
+        super().__init__()
+        self.ndim = ndim
+        self.integration_steps = integration_steps
+
+        self.unet = ne.nn.models.BasicUNet(
+            ndim=ndim,
+            in_channels=2,
+            out_channels=ndim,
+            nb_features=nb_features,
+        )
+
+        bottleneck_channels = self.unet.lowest_resolution_conv_block.out_channels
+        self.attention = nn.MultiheadAttention(
+            embed_dim=bottleneck_channels,
+            num_heads=attn_heads,
+            batch_first=True,
+        )
+        # The gate is the whole point: zero here means "start as the baseline".
+        self.gate = nn.Parameter(torch.zeros(1))
+
+        self.flow_layer = _init_flow_layer(ndim)
+        self.spatial_transformer = vxm.nn.modules.SpatialTransformer()
+        if integration_steps > 0:
+            self.integrator = vxm.nn.modules.IntegrateVelocityField(steps=integration_steps)
+
+    def _encode(self, stacked: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        """
+        Run a two-channel input through the encoder, returning bottleneck features and skips.
+
+        Parameters
+        ----------
+        stacked : torch.Tensor
+            Two-channel input of shape (B, 2, *spatial).
+
+        Returns
+        -------
+        tuple
+            `(bottleneck, skips)`.
+        """
+        features = stacked
+        skips: List[torch.Tensor] = []
+        for block in self.unet.downsampling_conv_blocks:
+            features, skip = block(features)
+            skips.append(skip)
+        return self.unet.lowest_resolution_conv_block(features), skips
+
+    def _attend(self, query_feat: torch.Tensor, key_feat: torch.Tensor) -> torch.Tensor:
+        """
+        Cross-attend the forward bottleneck to the swapped-view bottleneck.
+
+        Parameters
+        ----------
+        query_feat, key_feat : torch.Tensor
+            Bottleneck features of shape (B, C, *reduced_spatial).
+
+        Returns
+        -------
+        torch.Tensor
+            Attention output, same shape as `query_feat`. Returned *un*-normalised and
+            *un*-added, so the caller controls the gate.
+        """
+        batch, channels = query_feat.shape[:2]
+        spatial = query_feat.shape[2:]
+
+        query = query_feat.flatten(2).transpose(1, 2)
+        key = key_feat.flatten(2).transpose(1, 2)
+
+        attended, _ = self.attention(query, key, key, need_weights=False)
+        return attended.transpose(1, 2).reshape(batch, channels, *spatial)
+
+    def _decode(self, features: torch.Tensor, skips: List[torch.Tensor]) -> torch.Tensor:
+        """Decode bottleneck features to full resolution using the forward stream's skips."""
+        for block, skip in zip(self.unet.upsampling_conv_blocks, reversed(skips)):
+            features = block(features, skip)
+        return self.unet.out_layer(features)
+
+    def forward(self, source: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Register `source` to `target`; see module docstring for returned keys."""
+        forward_feat, skips = self._encode(torch.cat([source, target], dim=1))
+        swapped_feat, _ = self._encode(torch.cat([target, source], dim=1))
+
+        gated = forward_feat + torch.tanh(self.gate) * self._attend(forward_feat, swapped_feat)
+        velocity = self.flow_layer(self._decode(gated, skips))
+
+        if self.integration_steps > 0:
+            displacement = self.integrator(velocity)
+        else:
+            displacement = velocity
+
+        outputs = {
+            'displacement': displacement,
+            'warped_source': self.spatial_transformer(source, displacement),
+            'gate': torch.tanh(self.gate).detach(),
+        }
+        if self.integration_steps > 0:
+            outputs['velocity'] = velocity
+        return outputs
+
+
+class VxmCoarseToFine(nn.Module):
+    """
+    Cascaded multi-resolution registration: predict, warp, then predict a residual.
+
+    The paper notes (SS IV-A) that the receptive field at the coarsest UNet level must be at least
+    as large as the maximum expected displacement. A single full-resolution prediction therefore
+    has to solve large and small displacements with the same machinery. This variant splits that:
+    an early stage sees a downsampled pair -- where a large displacement is a *small* number of
+    voxels and easily within the receptive field -- and later stages only ever see a nearly
+    aligned pair and predict a small residual.
+
+    Per stage: warp the source with the transform accumulated so far, predict a residual from
+    `(warped_source, target)`, and **compose** rather than add. Composition matters: two
+    displacement fields do not sum, because the second is defined on the grid the first has
+    already moved. The correct rule is `u_total(x) = u1(x) + u2(x + u1(x))`, evaluated here by
+    resampling `u2` through `u1` with the spatial transformer, which stays batched and
+    differentiable (unlike `voxelmorph.nn.functional.compose`, which must be looped per sample --
+    see `metrics.inverse_consistency`).
+
+    A displacement field upsampled by a factor `s` must also be **scaled by `s`**: it is measured
+    in voxels, and voxels get smaller as resolution rises. Omitting that scaling silently halves
+    every coarse displacement and is the classic bug in this construction.
+
+    **The capacity confound is real and is controlled by configuration, not by argument.** Two
+    stages means two UNets, so any gain could simply be more parameters. Setting `stage_scales`
+    to `(1, 1)` gives a cascade at a *single* resolution with identical parameter count, which
+    isolates the multi-resolution claim from the extra-capacity one. Report both.
+
+    Parameters
+    ----------
+    ndim : int
+        Spatial dimensionality.
+    nb_features : sequence of int
+        UNet features per level for the finest stage. Coarser stages drop levels, since a
+        downsampled volume cannot be halved as many times.
+    integration_steps : int
+        Scaling-and-squaring steps applied to each stage's residual field.
+    stage_scales : sequence of int
+        Downsampling factor per stage, coarsest first. `(2, 1)` is coarse-to-fine; `(1, 1)` is
+        the same-resolution cascade control.
+    """
+
+    def __init__(
+        self,
+        ndim: int,
+        nb_features: Sequence[int] = (16, 32, 32, 32, 32),
+        integration_steps: int = 0,
+        stage_scales: Sequence[int] = (2, 1),
+    ) -> None:
+        super().__init__()
+        self.ndim = ndim
+        self.integration_steps = integration_steps
+        self.stage_scales = tuple(stage_scales)
+
+        self.stages = nn.ModuleList()
+        self.flow_layers = nn.ModuleList()
+        for scale in self.stage_scales:
+            # A stage running at 1/scale resolution can afford log2(scale) fewer downsamplings
+            # before the spatial extent stops being divisible by two.
+            levels = len(nb_features) - int(round(math.log2(scale)))
+            self.stages.append(ne.nn.models.BasicUNet(
+                ndim=ndim, in_channels=2, out_channels=ndim,
+                nb_features=tuple(nb_features[:levels]),
+            ))
+            self.flow_layers.append(_init_flow_layer(ndim))
+
+        self.spatial_transformer = vxm.nn.modules.SpatialTransformer()
+        if integration_steps > 0:
+            self.integrator = vxm.nn.modules.IntegrateVelocityField(steps=integration_steps)
+
+    def _resize(self, tensor: torch.Tensor, scale: float, is_field: bool) -> torch.Tensor:
+        """
+        Resample a tensor by `scale`, rescaling magnitudes when it is a displacement field.
+
+        Parameters
+        ----------
+        tensor : torch.Tensor
+            Image or field of shape (B, C, *spatial).
+        scale : float
+            Output size relative to input; 0.5 halves each spatial extent.
+        is_field : bool
+            True for a displacement field, whose values are in voxels and must be scaled too.
+        """
+        if scale == 1.0:
+            return tensor
+        mode = 'bilinear' if self.ndim == 2 else 'trilinear'
+        resized = nn.functional.interpolate(tensor, scale_factor=scale, mode=mode,
+                                            align_corners=False)
+        return resized * scale if is_field else resized
+
+    def _compose(self, accumulated: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+        """
+        Compose an accumulated transform with a new residual applied *after* it.
+
+        Warping by `accumulated` and then by `residual` is equivalent to warping once by
+        `residual(x) + accumulated(x + residual(x))` -- note the residual comes first in the
+        composed expression, because it is the outer transform that relocates the sampling
+        point. The mirror-image ordering is a natural mistake and is only ~2x worse than this
+        one on smooth fields, which is why `tests/test_project_coarse_to_fine.py` checks it
+        numerically against sequential warping rather than by inspection. Plain addition,
+        `accumulated + residual`, also *nearly* works and is likewise rejected there.
+        """
+        return compose_displacements(accumulated, residual, self.spatial_transformer)
+
+    def forward(self, source: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Register `source` to `target`; see module docstring for returned keys."""
+        total = torch.zeros(source.shape[0], self.ndim, *source.shape[2:],
+                            device=source.device, dtype=source.dtype)
+        residuals = []
+
+        for index, scale in enumerate(self.stage_scales):
+            warped = self.spatial_transformer(source, total)
+
+            factor = 1.0 / scale
+            pair = torch.cat([self._resize(warped, factor, is_field=False),
+                              self._resize(target, factor, is_field=False)], dim=1)
+            residual = self.flow_layers[index](self.stages[index](pair))
+
+            if self.integration_steps > 0:
+                residual = self.integrator(residual)
+            residual = self._resize(residual, float(scale), is_field=True)
+
+            total = self._compose(total, residual)
+            residuals.append(residual)
+
+        outputs = {
+            'displacement': total,
+            'warped_source': self.spatial_transformer(source, total),
+        }
+        if self.integration_steps > 0:
+            outputs['velocity'] = residuals[-1]
+        return outputs
+
+
+def forward_model(
+    model: nn.Module,
+    source: torch.Tensor,
+    target: torch.Tensor,
+    source_seg: Optional[torch.Tensor] = None,
+) -> Dict[str, torch.Tensor]:
+    """
+    Run a model, supplying the segmentation only to the variant that needs it.
+
+    Keeps the variant check in one place so training, validation and evaluation cannot drift
+    apart in how they call the model.
+
+    Parameters
+    ----------
+    model : nn.Module
+        Any of the variants in this module.
+    source, target : torch.Tensor
+        Input images of shape (B, 1, *spatial).
+    source_seg : torch.Tensor or None, optional
+        Segmentation of the source, required by `VxmLambdaStructure` and ignored otherwise.
+
+    Returns
+    -------
+    dict
+        The model's output dict.
+    """
+    if isinstance(model, VxmLambdaStructure):
+        return model(source, target, seg=source_seg)
+    return model(source, target)
+
+
 def build_model(config: ExperimentConfig) -> nn.Module:
     """
     Instantiate the model described by a configuration.
@@ -468,8 +994,17 @@ def build_model(config: ExperimentConfig) -> nn.Module:
     if config.variant == 'baseline':
         return VxmBaseline(**common)
     if config.variant == 'lambda_field':
-        return VxmLambdaField(mask_normalise=config.lambda_mask_norm, **common)
+        return VxmLambdaField(mask_normalise=config.lambda_mask_norm,
+                              weight_range=config.weight_range, **common)
+    if config.variant == 'lambda_structure':
+        return VxmLambdaStructure(n_labels=config.n_labels,
+                                  weight_range=config.weight_range,
+                                  structure_lambda=config.structure_lambda, **common)
     if config.variant == 'cross_attn':
         return VxmCrossAttention(attn_heads=config.attn_heads, **common)
+    if config.variant == 'coarse_to_fine':
+        return VxmCoarseToFine(stage_scales=config.stage_scales, **common)
+    if config.variant == 'cross_attn_gated':
+        return VxmCrossAttentionGated(attn_heads=config.attn_heads, **common)
 
     raise ValueError(f"unknown variant '{config.variant}'")

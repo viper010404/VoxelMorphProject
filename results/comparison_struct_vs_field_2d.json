@@ -1,0 +1,29 @@
+{
+  "baseline": "2d_lambda_field_lam0.25_disp_maskn",
+  "split": "test",
+  "comparisons": {
+    "2d_lambda_structure_lam0.25_disp": {
+      "dice": {
+        "n": 100,
+        "baseline_mean": 0.7573940996529206,
+        "candidate_mean": 0.7603915224356907,
+        "delta_mean": 0.0029974227827704904,
+        "delta_std": 0.01964798481944844,
+        "improved_pairs": 43,
+        "t_p": 0.13030730189822573,
+        "wilcoxon_p": 0.5202456779483677
+      },
+      "folding_fraction": {
+        "n": 100,
+        "baseline_mean": 0.0009632161458333333,
+        "candidate_mean": 0.0004580078124999999,
+        "delta_mean": -0.0005052083333333333,
+        "delta_std": 0.0012228766336651294,
+        "improved_pairs": 56,
+        "t_p": 7.548754350662505e-05,
+        "wilcoxon_p": 2.296456277981545e-07
+      },
+      "inverse_consistency": null
+    }
+  }
+}

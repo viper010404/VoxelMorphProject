@@ -23,11 +23,14 @@ from typing import Dict, List, Tuple
 import numpy as np
 import torch
 
+import voxelmorph as vxm
+
 from project.configs import ExperimentConfig
 from project.data import OasisData, PairSampler, default_label_policy, fixed_pairs
-from project.losses import registration_loss
+from project.losses import (inverse_consistency_loss, registration_loss,
+                            structure_weight_map)
 from project.metrics import dice_per_structure, mean_dice, warp_segmentation
-from project.models import build_model
+from project.models import build_model, forward_model
 
 
 def set_seed(seed: int) -> None:
@@ -74,9 +77,10 @@ def validation_dice(
         source = data.batch([moving_idx]).to(device)
         target = data.batch([fixed_idx]).to(device)
 
-        outputs = model(source, target)
-
         moving_seg = data.seg_batch([moving_idx]).to(device)
+
+        outputs = forward_model(model, source, target, moving_seg)
+
         warped_seg = warp_segmentation(moving_seg, outputs['displacement'])
 
         fixed_seg_np = data.seg_batch([fixed_idx]).squeeze().cpu().numpy()
@@ -120,8 +124,11 @@ def train(config: ExperimentConfig) -> Dict:
     model = build_model(config).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
 
+    # Stateless; used only to compose fields for the inverse-consistency term.
+    transformer = vxm.nn.modules.SpatialTransformer().to(device)
+
     config.save()
-    history = {'step': [], 'loss': [], 'similarity': [], 'smoothness': [],
+    history = {'step': [], 'loss': [], 'similarity': [], 'smoothness': [], 'inverse': [],
                'val_step': [], 'val_dice': []}
     best_dice = -float('inf')
     started = time.time()
@@ -132,16 +139,57 @@ def train(config: ExperimentConfig) -> Dict:
         target = target.to(device, non_blocking=True)
 
         optimizer.zero_grad(set_to_none=True)
-        outputs = model(source, target)
+        source_seg = None
+        if config.variant == 'lambda_structure':
+            source_seg = data.seg_batch(sampler.source_idx).to(device, non_blocking=True)
+        outputs = forward_model(model, source, target, source_seg)
+
+        # A fixed prior needs no weight head, so it applies to any variant -- including the
+        # cascade, which emits no lambda_map of its own.
+        weight = outputs.get('lambda_map')
+        if weight is None and config.structure_lambda is not None:
+            if source_seg is None:
+                source_seg = data.seg_batch(sampler.source_idx).to(device, non_blocking=True)
+            weight = structure_weight_map(source_seg, config.structure_lambda,
+                                          (source > 0) | (target > 0))
 
         losses = registration_loss(
             target=target,
             warped_source=outputs['warped_source'],
             disp=outputs['displacement'],
             lambda_reg=config.lambda_reg,
-            weight=outputs.get('lambda_map'),
+            weight=weight,
+            lambda_fold=config.lambda_fold,
+            fold_margin=config.fold_margin,
         )
-        losses['total'].backward()
+        total = losses['total']
+
+        if config.bidirectional:
+            # The *same* weights registered in the reverse direction, so this adds a second
+            # forward pass but no parameters -- any gain is from the objective, not capacity.
+            target_seg = None
+            if config.variant == 'lambda_structure':
+                target_seg = data.seg_batch(sampler.target_idx).to(device, non_blocking=True)
+            reverse = forward_model(model, target, source, target_seg)
+
+            reverse_losses = registration_loss(
+                target=source,
+                warped_source=reverse['warped_source'],
+                disp=reverse['displacement'],
+                lambda_reg=config.lambda_reg,
+                weight=reverse.get('lambda_map'),
+                lambda_fold=config.lambda_fold,
+                fold_margin=config.fold_margin,
+            )
+            total = total + reverse_losses['total']
+
+            if config.beta_inv > 0:
+                inverse = inverse_consistency_loss(
+                    outputs['displacement'], reverse['displacement'], transformer)
+                total = total + config.beta_inv * inverse
+                losses['inverse'] = inverse
+
+        total.backward()
         optimizer.step()
 
         if step % 100 == 0:
@@ -149,6 +197,8 @@ def train(config: ExperimentConfig) -> Dict:
             history['loss'].append(losses['total'].detach().item())
             history['similarity'].append(losses['similarity'].detach().item())
             history['smoothness'].append(losses['smoothness'].detach().item())
+            if 'inverse' in losses:
+                history['inverse'].append(losses['inverse'].detach().item())
 
         if step % config.val_every == 0 or step == config.steps:
             dice = validation_dice(model, data, val_pairs, labels, device)

@@ -33,7 +33,7 @@ from project.metrics import (
     mean_dice,
     warp_segmentation,
 )
-from project.models import build_model
+from project.models import build_model, forward_model
 
 
 @torch.no_grad()
@@ -82,15 +82,16 @@ def evaluate_run(
         source = data.batch([moving_idx]).to(device)
         target = data.batch([fixed_idx]).to(device)
 
+        moving_seg = data.seg_batch([moving_idx]).to(device)
+
         started = time.time()
-        outputs = model(source, target)
+        outputs = forward_model(model, source, target, moving_seg)
         if device == 'cuda':
             torch.cuda.synchronize()
         runtime = time.time() - started
 
         displacement = outputs['displacement']
 
-        moving_seg = data.seg_batch([moving_idx]).to(device)
         warped_seg = warp_segmentation(moving_seg, displacement)
 
         fixed_seg_np = data.seg_batch([fixed_idx]).squeeze().cpu().numpy()

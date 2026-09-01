@@ -76,6 +76,217 @@ def spatial_smoothness(
     return total / num_spatial
 
 
+def jacobian_determinant(disp: torch.Tensor) -> torch.Tensor:
+    """
+    Differentiable Jacobian determinant of the transform, on the interior grid.
+
+    The evaluation metric (`metrics.folding`) delegates to
+    `voxelmorph.py.utils.jacobian_determinant`, which is numpy and detached and so cannot appear
+    in a loss. This reimplements it in torch **using the same convention** -- central differences
+    of `disp + grid`, matching `np.gradient` -- so that a penalty applied during training reduces
+    the very quantity that is later reported, rather than a near neighbour of it.
+    `tests/test_project_folding.py` asserts agreement with the upstream function.
+
+    The interior is used because `np.gradient` switches to one-sided differences at the
+    boundary. Reproducing that exactly would add a special case for a rim of voxels that is
+    background in every neurite-OASIS image, so instead each spatial axis is cropped by one
+    voxel at each end and the penalty is defined on what remains.
+
+    Parameters
+    ----------
+    disp : torch.Tensor
+        Displacement field of shape (B, ndim, *spatial).
+
+    Returns
+    -------
+    torch.Tensor
+        Determinant of shape (B, *interior_spatial), where each spatial extent is reduced by 2.
+        Values near 1 mean locally volume-preserving; values <= 0 mean the transform folds.
+    """
+    ndim = disp.shape[1]
+    if disp.dim() - 2 != ndim:
+        raise ValueError(f'disp must be (B, ndim, *spatial) with matching ndim, '
+                         f'got shape {tuple(disp.shape)}')
+
+    # gradient[j][:, i] is d(disp_i)/dx_j by central difference, cropped so that every partial
+    # derivative is defined on one common interior grid.
+    gradients = []
+    for axis in range(ndim):
+        dim = 2 + axis
+        extent = disp.shape[dim]
+        forward = disp.narrow(dim, 2, extent - 2)
+        backward = disp.narrow(dim, 0, extent - 2)
+        derivative = (forward - backward) / 2.0
+        for other in range(ndim):
+            if other != axis:
+                other_dim = 2 + other
+                derivative = derivative.narrow(other_dim, 1, derivative.shape[other_dim] - 2)
+        gradients.append(derivative)
+
+    # Jacobian of phi = disp + identity, so the identity contributes 1 on the diagonal.
+    def entry(i, j):
+        value = gradients[j][:, i]
+        return value + 1.0 if i == j else value
+
+    if ndim == 2:
+        return entry(0, 0) * entry(1, 1) - entry(0, 1) * entry(1, 0)
+
+    return (
+        entry(0, 0) * (entry(1, 1) * entry(2, 2) - entry(1, 2) * entry(2, 1))
+        - entry(0, 1) * (entry(1, 0) * entry(2, 2) - entry(1, 2) * entry(2, 0))
+        + entry(0, 2) * (entry(1, 0) * entry(2, 1) - entry(1, 1) * entry(2, 0))
+    )
+
+
+def folding_penalty(disp: torch.Tensor, margin: float = 0.0) -> torch.Tensor:
+    """
+    Penalise locally non-invertible deformation, i.e. a non-positive Jacobian determinant.
+
+    The paper's diffusion regulariser penalises large spatial gradients of the displacement, which
+    discourages folding only indirectly -- a field can be smooth on average and still fold. Every
+    extension measured in this project trades folding for Dice, so this targets the failing
+    quantity directly.
+
+    The penalty is one-sided: `relu(margin - det)` is zero wherever the transform is already
+    orientation-preserving, so it never competes with the similarity term in well-behaved
+    regions and acts only where the deformation actually folds.
+
+    Parameters
+    ----------
+    disp : torch.Tensor
+        Displacement field of shape (B, ndim, *spatial).
+    margin : float, optional
+        Determinant value to push above. 0 penalises only actual folding; a small positive
+        value also discourages near-singular regions, at the cost of penalising extreme but
+        still-valid compression.
+
+    Returns
+    -------
+    torch.Tensor
+        Scalar penalty, averaged over voxels and batch.
+    """
+    return torch.relu(margin - jacobian_determinant(disp)).mean()
+
+
+def compose_displacements(
+    accumulated: torch.Tensor,
+    residual: torch.Tensor,
+    transformer,
+) -> torch.Tensor:
+    """
+    Compose two displacement fields: warp by `accumulated`, then by `residual`.
+
+    Displacement fields do not add. The second field is defined on the grid the first has already
+    moved, so the composed transform is `residual(x) + accumulated(x + residual(x))` -- the
+    residual appears first because it is the outer transform that relocates the sampling point.
+
+    This is easy to get subtly wrong and hard to notice: measured against sequential warping on
+    smooth fields, plain addition is ~1.1% off and the reversed ordering ~1.3%, against 0.6% for
+    this one. Nothing raises; the model just learns a slightly incoherent transform.
+    `tests/test_project_coarse_to_fine.py` pins it numerically.
+
+    Used in preference to `voxelmorph.nn.functional.compose`, which must be applied one sample at
+    a time (its batch detection misreads some shapes -- see `metrics.inverse_consistency`) and so
+    cannot sit in a training loop.
+
+    Parameters
+    ----------
+    accumulated, residual : torch.Tensor
+        Displacement fields of shape (B, ndim, *spatial).
+    transformer : nn.Module
+        A `voxelmorph` spatial transformer used to resample one field through the other.
+
+    Returns
+    -------
+    torch.Tensor
+        The composed displacement field, same shape.
+    """
+    return residual + transformer(accumulated, residual)
+
+
+def inverse_consistency_loss(
+    forward_disp: torch.Tensor,
+    backward_disp: torch.Tensor,
+    transformer,
+) -> torch.Tensor:
+    """
+    Penalise failure of a transform and its reverse to undo each other.
+
+    Registering A to B and then B back to A should return every voxel to where it started, so the
+    composition of the two fields should be the zero displacement. The residual magnitude is
+    therefore the error directly, with no grid subtraction needed.
+
+    Both orderings are penalised. Composition is not symmetric, and constraining only one
+    direction leaves the other free to drift -- which would let the network satisfy the letter of
+    the constraint while still producing a pair that does not invert.
+
+    This is the *differentiable* counterpart of `metrics.inverse_consistency`, which is the
+    quantity already reported for every run; training therefore optimises the metric that is
+    ultimately scored rather than a near neighbour of it.
+
+    Parameters
+    ----------
+    forward_disp, backward_disp : torch.Tensor
+        Displacement fields for A->B and B->A, shape (B, ndim, *spatial).
+    transformer : nn.Module
+        Spatial transformer used for composition.
+
+    Returns
+    -------
+    torch.Tensor
+        Scalar penalty; zero when the two transforms invert each other exactly.
+    """
+    forward_then_back = compose_displacements(forward_disp, backward_disp, transformer)
+    back_then_forward = compose_displacements(backward_disp, forward_disp, transformer)
+    return forward_then_back.pow(2).mean() + back_then_forward.pow(2).mean()
+
+
+def structure_weight_map(
+    seg: torch.Tensor,
+    structure_lambda,
+    mask: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Build a per-voxel regularisation weight from a fixed per-structure table.
+
+    The fixed anatomical prior depends only on the segmentation, not on the network, so it does
+    not belong inside a model. Computing it here lets any variant be trained under the prior --
+    in particular the cascade, whose model emits no weight map of its own.
+
+    Normalisation is over the brain mask, matching `models.VxmLambdaStructure`, so the total
+    regularisation budget equals the baseline's and only its distribution differs.
+
+    Parameters
+    ----------
+    seg : torch.Tensor
+        Segmentation of the moving image, shape (B, 1, *spatial), integer label ids.
+    structure_lambda : sequence of float
+        One weight per label id; must cover the largest id present.
+    mask : torch.Tensor
+        Boolean brain mask of the same shape as `seg`.
+
+    Returns
+    -------
+    torch.Tensor
+        Weight map of shape (B, 1, *spatial) with masked per-sample mean 1.
+    """
+    table = torch.as_tensor(list(structure_lambda), dtype=torch.float32, device=seg.device)
+    index = seg.reshape(seg.shape[0], -1).long()
+
+    largest = int(index.max())
+    if largest >= table.numel():
+        raise ValueError(f'segmentation contains label id {largest} but structure_lambda has '
+                         f'{table.numel()} entries')
+
+    weights = table[index].reshape_as(seg).to(seg.device)
+
+    spatial_dims = tuple(range(1, weights.dim()))
+    indicator = mask.to(weights.dtype)
+    count = indicator.sum(dim=spatial_dims, keepdim=True).clamp(min=1.0)
+    masked_mean = (weights * indicator).sum(dim=spatial_dims, keepdim=True) / count
+    return weights / masked_mean
+
+
 def image_similarity(target: torch.Tensor, warped_source: torch.Tensor) -> torch.Tensor:
     """
     Mean squared voxelwise difference between the fixed image and the warped moving image.
@@ -104,6 +315,8 @@ def registration_loss(
     disp: torch.Tensor,
     lambda_reg: float,
     weight: Optional[torch.Tensor] = None,
+    lambda_fold: float = 0.0,
+    fold_margin: float = 0.0,
 ) -> dict:
     """
     Assemble the full unsupervised registration objective.
@@ -125,18 +338,33 @@ def registration_loss(
         Regularisation trade-off parameter.
     weight : torch.Tensor or None, optional
         Per-voxel regularisation weight of shape (B, 1, *spatial), mean 1.
+    lambda_fold : float, optional
+        Weight on the anti-folding penalty. 0 disables it, reproducing the paper's objective
+        exactly, so existing runs are unaffected.
+    fold_margin : float, optional
+        Determinant margin for that penalty; see `folding_penalty`.
 
     Returns
     -------
     dict
-        Keys `total`, `similarity` and `smoothness`, each a scalar tensor. The components are
-        returned separately so training curves can show which term is moving.
+        Keys `total`, `similarity`, `smoothness` and `folding`, each a scalar tensor. The
+        components are returned separately so training curves can show which term is moving.
     """
     similarity = image_similarity(target, warped_source)
     smoothness = spatial_smoothness(disp, weight=weight)
+    total = similarity + lambda_reg * smoothness
+
+    # Skipped entirely when disabled: the determinant is not free, and paying for it on every
+    # step of every baseline run would slow the whole matrix for a term worth zero.
+    if lambda_fold > 0.0:
+        folding = folding_penalty(disp, margin=fold_margin)
+        total = total + lambda_fold * folding
+    else:
+        folding = disp.new_zeros(())
 
     return {
-        'total': similarity + lambda_reg * smoothness,
+        'total': total,
         'similarity': similarity,
         'smoothness': smoothness,
+        'folding': folding,
     }
