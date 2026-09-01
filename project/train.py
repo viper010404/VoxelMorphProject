@@ -31,6 +31,45 @@ from project.metrics import dice_per_structure, mean_dice, warp_segmentation
 from project.models import build_model
 
 
+# Substrings identifying the output head across variants. The baseline's head is
+# `out_layer` (1x1, 16->ndim) followed by `flow_layer` (3x3 on the field) -- 72 parameters in
+# total, against ~111k in the network. `fathead` adds `hidden_conv`/`flow_head`; `pyramid` has
+# `flow_heads`.
+HEAD_PARAMETER_MARKERS = ('out_layer', 'flow_layer', 'flow_head', 'hidden_conv', 'projections')
+
+
+def head_parameter_groups(model, lr: float, multiplier: float):
+    """
+    Split parameters into head and body groups so the head can take a different step size.
+
+    Adding capacity at the output head helps, but "capacity" and "this layer is optimised too
+    slowly" predict the same result. A learning-rate multiplier on the *existing* head changes
+    the optimisation without adding a single parameter, which separates them: if a faster head
+    recovers the gain, the extra parameters were never the mechanism.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Model whose parameters to split.
+    lr : float
+        Base learning rate, applied to the body.
+    multiplier : float
+        Factor applied to `lr` for head parameters.
+
+    Returns
+    -------
+    list
+        Adam parameter groups.
+    """
+    head, body = [], []
+    for name, parameter in model.named_parameters():
+        target = head if any(marker in name for marker in HEAD_PARAMETER_MARKERS) else body
+        target.append(parameter)
+    if not head:
+        raise ValueError('no head parameters matched; a head lr multiplier would do nothing')
+    return [{'params': body, 'lr': lr}, {'params': head, 'lr': lr * multiplier}]
+
+
 def set_seed(seed: int) -> None:
     """Seed torch and numpy so a run is reproducible up to cuDNN non-determinism."""
     torch.manual_seed(seed)
@@ -129,12 +168,28 @@ def train(config: ExperimentConfig) -> Dict:
     labels = default_label_policy(data, 'val')
     val_pairs = fixed_pairs(data, 'val', config.val_pairs, seed=99)
 
+    # Optional read-only trace on the *test* pairs, so a long run's conclusion is visible while
+    # it is still running instead of only at the end. It is deliberately never compared against
+    # `best_dice`: selecting a checkpoint on the test split would make every number downstream
+    # optimistically biased, and the whole point of the fixed pair list is that it is touched
+    # once. `test_labels` uses the test split's own label policy so the trace matches what
+    # `evaluate.py` will report.
+    test_pairs, test_labels = [], labels
+    if config.test_every > 0:
+        test_labels = default_label_policy(data, 'test')
+        test_pairs = fixed_pairs(data, 'test', config.test_pairs, seed=1234)
+
     model = build_model(config).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
+    if config.head_lr_mult != 1.0:
+        optimizer = torch.optim.Adam(
+            head_parameter_groups(model, config.lr, config.head_lr_mult))
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
 
     config.save()
     history = {'step': [], 'loss': [], 'similarity': [], 'smoothness': [],
-               'val_step': [], 'val_dice': []}
+               'val_step': [], 'val_dice': [], 'test_step': [], 'test_dice': [],
+               'step_seconds': []}
     best_dice = -float('inf')
     started = time.time()
 
@@ -190,9 +245,26 @@ def train(config: ExperimentConfig) -> Dict:
                 torch.save(model.state_dict(), config.output_dir / 'best.pt')
 
             elapsed = time.time() - started
+            # Recorded so a monitor can compute an ETA from observed throughput rather than
+            # from an assumed step rate, which drifts with GPU contention.
+            history['step_seconds'].append(elapsed / step)
+            eta = (config.steps - step) * elapsed / step
             print(f'[{config.name}] step {step}/{config.steps} '
                   f'loss={losses["total"].detach().item():.5f} val_dice={dice:.4f} '
-                  f'best={best_dice:.4f} ({elapsed:.0f}s)', flush=True)
+                  f'best={best_dice:.4f} ({elapsed:.0f}s, eta {eta / 3600:.2f}h)', flush=True)
+
+        if config.test_every > 0 and (step % config.test_every == 0 or step == config.steps):
+            test_dice = validation_dice(model, data, test_pairs, test_labels, device,
+                                        misalign_magnitude=config.misalign_magnitude)
+            history['test_step'].append(step)
+            history['test_dice'].append(test_dice)
+            print(f'[{config.name}] step {step}/{config.steps} '
+                  f'TEST dice={test_dice:.4f} (monitoring only, not used for selection)',
+                  flush=True)
+            # Written incrementally so the trace is readable while the run is still going;
+            # the final write below is what closes the file out.
+            with open(config.output_dir / 'history.json', 'w') as f:
+                json.dump(history, f, indent=2)
 
     history['best_val_dice'] = best_dice
     history['train_seconds'] = time.time() - started
@@ -217,6 +289,9 @@ def main() -> None:
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--val-every', type=int, default=1000)
+    parser.add_argument('--test-every', type=int, default=0,
+                        help='trace mean Dice on the fixed test pairs every N steps. Monitoring '
+                             'only -- it never influences which checkpoint is kept')
     parser.add_argument('--data-path', type=str, default='data/oasis2d.npz')
     parser.add_argument('--output-root', type=str, default='results')
     args = parser.parse_args()
@@ -237,6 +312,7 @@ def main() -> None:
             lr=args.lr,
             seed=args.seed,
             val_every=args.val_every,
+            test_every=args.test_every,
             data_path=args.data_path,
             output_root=args.output_root,
         )

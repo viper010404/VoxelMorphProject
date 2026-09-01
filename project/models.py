@@ -849,6 +849,248 @@ def _resample_field(field: torch.Tensor, shape: Sequence[int], ndim: int) -> tor
     return resampled
 
 
+class VxmFatHead(nn.Module):
+    """
+    Capacity control for the pyramid: the same parameter budget, spent at one resolution.
+
+    `VxmPyramid` with `progressive=False` beats the baseline by ~0.006 Dice while adding only
+    ~2 300 parameters, and it does so across a whole misalignment ladder. Two explanations
+    survive that observation and they are not the same claim:
+
+    * the extra parameters and the extra gradient path to the output do the work, in which case
+      the branch is a capacity trick and the multi-scale story is decoration; or
+    * the *multi-resolution decomposition* does the work -- a residual predicted at 1/16
+      resolution and upsampled is band-limited by construction, so the field becomes a sum of
+      smooth components and large-scale motion becomes cheap to represent both for the network
+      and under the smoothness penalty.
+
+    This class isolates the second. It keeps the pyramid's UNet **exactly** -- same
+    `BasicUNet`, same widths, same forward path -- and replaces the five per-level flow heads
+    with a two-layer head at the finest resolution only, sized so the parameter counts match to
+    within ~0.03%. Any remaining difference is therefore the multi-resolution structure and not
+    the budget.
+
+    Matching against `VxmBaseline` instead would not do: that delegates to upstream
+    `VxmPairwise`, whose UNet differs from `BasicUNet` by a couple of hundred parameters on its
+    own, which is a tenth of the effect under test.
+
+    Parameters
+    ----------
+    ndim : int
+        Spatial dimensionality.
+    nb_features : sequence of int
+        UNet features per level.
+    integration_steps : int
+        Scaling-and-squaring steps applied to the field; 0 for a plain displacement.
+    hidden : int, optional
+        Width of the extra full-resolution convolution. The default is chosen to match
+        `VxmPyramid`'s head budget for the default widths; `matched_hidden` computes it for
+        any configuration.
+    """
+
+    def __init__(
+        self,
+        ndim: int,
+        nb_features: Sequence[int] = (16, 32, 32, 32, 32),
+        integration_steps: int = 0,
+        hidden: Optional[int] = None,
+        kernel: int = 3,
+        image_skip: bool = False,
+    ) -> None:
+        super().__init__()
+        self.ndim = ndim
+        self.integration_steps = integration_steps
+        self.image_skip = image_skip
+
+        self.unet = ne.nn.models.BasicUNet(
+            ndim=ndim,
+            in_channels=2,
+            out_channels=ndim,
+            nb_features=nb_features,
+        )
+
+        widths = list(self.unet.up_actual_channels)
+        if hidden is None:
+            hidden = self.matched_hidden(ndim, widths, kernel)
+
+        conv = nn.Conv2d if ndim == 2 else nn.Conv3d
+        # The decoder's own features, optionally plus the two raw images. The head currently
+        # only ever sees features that have been through the whole UNet; giving it the intensity
+        # values directly tests whether the last layer wants information the encoder discarded.
+        in_channels = widths[-1] + (2 if image_skip else 0)
+        self.hidden_conv = conv(in_channels, hidden, kernel_size=kernel, padding=kernel // 2)
+        self.flow_head = conv(hidden, ndim, kernel_size=kernel, padding=kernel // 2)
+
+        # Same near-zero start as every other variant: the model begins at the identity, so a
+        # difference against the pyramid cannot come from a different starting point.
+        nn.init.normal_(self.flow_head.weight, mean=0.0, std=1e-5)
+        nn.init.zeros_(self.flow_head.bias)
+
+        self.spatial_transformer = vxm.nn.modules.SpatialTransformer()
+        if integration_steps > 0:
+            self.integrator = vxm.nn.modules.IntegrateVelocityField(steps=integration_steps)
+
+    @staticmethod
+    def matched_hidden(ndim: int, widths: Sequence[int], kernel: int = 3) -> int:
+        """
+        Hidden width whose two-layer head costs what `VxmPyramid`'s five heads cost.
+
+        A `k x k` convolution from `a` to `b` channels costs `a*b*k**ndim + b`. The pyramid
+        spends one such head per decoder level; this spends `widths[-1] -> hidden -> ndim`. The
+        result is rounded down, so the control is never given *more* parameters than the model
+        it is controlling for.
+
+        `kernel` matters because a 1x1 head is the control that separates *capacity* from
+        *receptive field*: the 3x3 head does not only add parameters, it also lets the output
+        layer see a wider neighbourhood. Matching on parameters at kernel 1 buys a much wider
+        hidden layer for the same budget, which is the point -- if that does as well, the extra
+        spatial context was never what mattered.
+
+        Parameters
+        ----------
+        ndim : int
+            Spatial dimensionality; sets the kernel volume.
+        widths : sequence of int
+            Decoder output widths, coarsest first.
+        kernel : int, optional
+            Kernel size of the head's convolutions.
+
+        Returns
+        -------
+        int
+            Hidden width, at least 1.
+        """
+        pyramid_cost = sum(width * ndim * 3 ** ndim + ndim for width in widths)
+        volume = kernel ** ndim
+        # cost(hidden) = widths[-1]*hidden*volume + hidden + hidden*ndim*volume + ndim
+        per_unit = widths[-1] * volume + 1 + ndim * volume
+        return max(1, int((pyramid_cost - ndim) // per_unit))
+
+    def forward(self, source: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Register `source` to `target`; see module docstring for returned keys."""
+        features = torch.cat([source, target], dim=1)
+
+        skips: List[torch.Tensor] = []
+        for block in self.unet.downsampling_conv_blocks:
+            features, skip = block(features)
+            skips.append(skip)
+        features = self.unet.lowest_resolution_conv_block(features)
+
+        for block, skip in zip(self.unet.upsampling_conv_blocks, reversed(skips)):
+            features = block(features, skip)
+
+        if self.image_skip:
+            features = torch.cat([features, source, target], dim=1)
+
+        velocity = self.flow_head(torch.nn.functional.leaky_relu(self.hidden_conv(features), 0.2))
+        displacement = self.integrator(velocity) if self.integration_steps > 0 else velocity
+        warped_source = self.spatial_transformer(source, displacement)
+
+        outputs = {'displacement': displacement, 'warped_source': warped_source}
+        if self.integration_steps > 0:
+            outputs['velocity'] = velocity
+        return outputs
+
+class VxmMultiScaleFeatures(nn.Module):
+    """
+    Multi-scale *features* feeding one flow head, rather than multi-scale *fields* summed.
+
+    `VxmPyramid` gives each decoder level its own flow head and adds the resulting fields. That
+    turned out to be no better than spending the same parameters on a single fat head at full
+    resolution, which raises an obvious question the pyramid does not answer: was the problem
+    the multi-scale idea, or the fact that it was applied to the *output* rather than to what
+    the output is computed from?
+
+    This variant keeps the multi-scale hierarchy but moves the combination one step earlier.
+    Every decoder level is projected to a few channels by a 1x1 convolution, upsampled to full
+    resolution, and concatenated; a single head then predicts one field from that stack. So the
+    head sees all scales at once and can mix them, instead of each scale independently
+    committing to a displacement that is later summed.
+
+    The 1x1 projections are what keep this affordable: concatenating the raw decoder features
+    would put ~128 channels at full resolution, and the head over them would dwarf the model it
+    is meant to be compared against.
+
+    Unlike a field, a *feature* map does not need rescaling when upsampled -- it carries no
+    units. That asymmetry is easy to get backwards, and getting it backwards here would be
+    invisible rather than wrong-looking.
+
+    Parameters
+    ----------
+    ndim : int
+        Spatial dimensionality.
+    nb_features : sequence of int
+        UNet features per level.
+    integration_steps : int
+        Scaling-and-squaring steps applied to the field; 0 for a plain displacement.
+    per_level : int, optional
+        Channels each decoder level is projected to before concatenation.
+    """
+
+    def __init__(
+        self,
+        ndim: int,
+        nb_features: Sequence[int] = (16, 32, 32, 32, 32),
+        integration_steps: int = 0,
+        per_level: int = 4,
+    ) -> None:
+        super().__init__()
+        self.ndim = ndim
+        self.integration_steps = integration_steps
+
+        self.unet = ne.nn.models.BasicUNet(
+            ndim=ndim,
+            in_channels=2,
+            out_channels=ndim,
+            nb_features=nb_features,
+        )
+
+        conv = nn.Conv2d if ndim == 2 else nn.Conv3d
+        widths = list(self.unet.up_actual_channels)
+        self.projections = nn.ModuleList([
+            conv(width, per_level, kernel_size=1) for width in widths
+        ])
+        self.flow_head = conv(per_level * len(widths), ndim, kernel_size=3, padding=1)
+        nn.init.normal_(self.flow_head.weight, mean=0.0, std=1e-5)
+        nn.init.zeros_(self.flow_head.bias)
+
+        self.spatial_transformer = vxm.nn.modules.SpatialTransformer()
+        if integration_steps > 0:
+            self.integrator = vxm.nn.modules.IntegrateVelocityField(steps=integration_steps)
+
+    def forward(self, source: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Register `source` to `target`; see module docstring for returned keys."""
+        features = torch.cat([source, target], dim=1)
+
+        skips: List[torch.Tensor] = []
+        for block in self.unet.downsampling_conv_blocks:
+            features, skip = block(features)
+            skips.append(skip)
+        features = self.unet.lowest_resolution_conv_block(features)
+
+        levels: List[torch.Tensor] = []
+        for block, skip in zip(self.unet.upsampling_conv_blocks, reversed(skips)):
+            features = block(features, skip)
+            levels.append(features)
+
+        mode = 'bilinear' if self.ndim == 2 else 'trilinear'
+        full = levels[-1].shape[2:]
+        stacked = torch.cat([
+            projection(level) if level.shape[2:] == full else
+            torch.nn.functional.interpolate(
+                projection(level), size=tuple(full), mode=mode, align_corners=True)
+            for projection, level in zip(self.projections, levels)
+        ], dim=1)
+
+        velocity = self.flow_head(stacked)
+        displacement = self.integrator(velocity) if self.integration_steps > 0 else velocity
+        warped_source = self.spatial_transformer(source, displacement)
+
+        outputs = {'displacement': displacement, 'warped_source': warped_source}
+        if self.integration_steps > 0:
+            outputs['velocity'] = velocity
+        return outputs
+
 class VxmCascade(nn.Module):
     """
     Two-stage cascaded refinement: register, warp, then register the residual and compose.
@@ -986,6 +1228,11 @@ def build_model(config: ExperimentConfig) -> nn.Module:
         return VxmCascade(stage_scales=config.cascade_scales, **common)
     if config.variant == 'pyramid':
         return VxmPyramid(progressive=config.pyramid_progressive, **common)
+    if config.variant == 'fathead':
+        return VxmFatHead(hidden=config.head_hidden, kernel=config.head_kernel,
+                          image_skip=config.head_image_skip, **common)
+    if config.variant == 'msf':
+        return VxmMultiScaleFeatures(per_level=config.msf_per_level, **common)
     if config.variant == 'cross_attn':
         return VxmCrossAttention(attn_heads=config.attn_heads,
                                  target_skips=config.cross_attn_target_skips,

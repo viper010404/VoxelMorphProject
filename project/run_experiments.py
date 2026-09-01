@@ -157,6 +157,25 @@ def main() -> None:
     parser.add_argument('--no-deep-supervision', action='store_true',
                         help='pyramid: train on the final field only, isolating architecture '
                              'from objective')
+    parser.add_argument('--head-hidden', type=int, default=None,
+                        help='fathead: hidden width of the output head. Default matches the '
+                             'pyramid parameter budget; sweep it to find where the head '
+                             'capacity curve flattens')
+    parser.add_argument('--head-kernel', type=int, default=3,
+                        help='fathead: head kernel size. 1 removes the extra receptive field '
+                             'while keeping the parameters, separating capacity from context')
+    parser.add_argument('--head-image-skip', action='store_true',
+                        help='fathead: concatenate the raw source and target to the head input')
+    parser.add_argument('--head-lr-mult', type=float, default=1.0,
+                        help='multiply the learning rate on the output head only, adding no '
+                             'parameters. Separates "the head lacks capacity" from "the head '
+                             'is optimised too slowly"')
+    parser.add_argument('--msf-per-level', type=int, default=4,
+                        help='msf: channels each decoder level is projected to')
+    parser.add_argument('--test-every', type=int, default=0,
+                        help='trace mean Dice on the fixed test pairs every N steps, so a long '
+                             'run reports its conclusion as it goes. Monitoring only: it never '
+                             'selects a checkpoint')
     parser.add_argument('--misalign', type=float, default=0.0,
                         help='train with synthetic misalignment of up to this many voxels, '
                              'creating the large-displacement regime the dataset lacks')
@@ -202,7 +221,15 @@ def main() -> None:
                   'nb_features': args.nb_features,
                   'misalign_magnitude': args.misalign,
                   'pyramid_progressive': not args.no_progressive,
-                  'deep_supervision': not args.no_deep_supervision}
+                  'deep_supervision': not args.no_deep_supervision,
+                  'test_every': args.test_every,
+                  'head_hidden': args.head_hidden,
+                  'head_kernel': args.head_kernel,
+                  'head_image_skip': args.head_image_skip,
+                  'msf_per_level': args.msf_per_level,
+                  'head_lr_mult': args.head_lr_mult}
+        if args.seeds:
+            kwargs['seeds'] = args.seeds
         if args.sweep_variants:
             kwargs['sweep_variants'] = args.sweep_variants
         if args.lambdas:

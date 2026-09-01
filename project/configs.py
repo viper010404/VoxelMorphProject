@@ -15,7 +15,8 @@ from typing import List, Optional, Sequence
 
 DEFAULT_FEATURES = (16, 32, 32, 32, 32)
 
-VARIANTS = ('baseline', 'lambda_field', 'cross_attn', 'pyramid', 'cascade')
+VARIANTS = ('baseline', 'lambda_field', 'cross_attn', 'pyramid', 'cascade', 'fathead',
+            'msf')
 
 
 @dataclass
@@ -53,6 +54,12 @@ class ExperimentConfig:
     val_every : int
         Validation interval in steps. The best-on-validation checkpoint is the one evaluated,
         so the test split is only touched once.
+    test_every : int
+        Trace mean Dice on the fixed test pairs every this many steps; 0 disables it. The trace
+        is for monitoring a long run only and never selects a checkpoint -- see `train.train`.
+    test_pairs : int
+        Number of fixed test pairs the trace scores. Must match what `evaluate.py` uses, or the
+        trace and the final number are measuring different things.
     val_pairs : int
         Number of validation pairs used for model selection.
     attn_heads : int
@@ -110,6 +117,13 @@ class ExperimentConfig:
     # small validation set selects on noise. 64 pairs keeps the standard error near 0.01 while
     # costing only a few seconds per check.
     val_pairs: int = 64
+    test_every: int = 0
+    test_pairs: int = 100
+    head_hidden: Optional[int] = None
+    head_kernel: int = 3
+    head_image_skip: bool = False
+    msf_per_level: int = 4
+    head_lr_mult: float = 1.0
     attn_heads: int = 4
     lambda_mask_norm: bool = False
     cross_attn_target_skips: bool = False
@@ -172,6 +186,13 @@ def build_matrix(
     cascade_scales: Sequence[int] = (2, 1),
     pyramid_progressive: bool = True,
     deep_supervision: bool = True,
+    test_every: int = 0,
+    head_hidden: Optional[int] = None,
+    head_kernel: int = 3,
+    head_image_skip: bool = False,
+    msf_per_level: int = 4,
+    head_lr_mult: float = 1.0,
+    seeds: Sequence[int] = (0,),
     sweep_variants: Sequence[str] = ('baseline', 'lambda_field'),
 ) -> List[ExperimentConfig]:
     """
@@ -268,6 +289,19 @@ def build_matrix(
                     suffix += '_f' + '-'.join(str(width) for width in nb_features)
                 if variant == 'cascade':
                     suffix += '_c2f' + ''.join(str(x) for x in cascade_scales)
+                if variant == 'fathead':
+                    # The head's width and kernel are the quantities under test here, so they
+                    # have to be in the directory name or the sweep overwrites itself.
+                    if head_hidden is not None:
+                        suffix += f'_h{head_hidden}'
+                    if head_kernel != 3:
+                        suffix += f'_k{head_kernel}'
+                    if head_image_skip:
+                        suffix += '_imgskip'
+                if head_lr_mult != 1.0:
+                    suffix += f'_hlr{head_lr_mult:g}'
+                if variant == 'msf' and msf_per_level != 4:
+                    suffix += f'_p{msf_per_level}'
                 if variant == 'pyramid':
                     if not pyramid_progressive:
                         suffix += '_noprog'
@@ -280,28 +314,39 @@ def build_matrix(
                 # and --skip-existing would skip them entirely, silently leaving no reference.
                 if steps != 20000:
                     suffix += f'_s{steps // 1000}k'
-                configs.append(ExperimentConfig(
-                    name=f'{ndim}d_{variant}_lam{lam}_{tag}{suffix}',
-                    variant=variant,
-                    ndim=ndim,
-                    nb_features=nb_features,
-                    misalign_magnitude=misalign_magnitude,
-                    cascade_scales=cascade_scales,
-                    pyramid_progressive=pyramid_progressive,
-                    deep_supervision=deep_supervision,
-                    lambda_reg=lam,
-                    integration_steps=isteps,
-                    steps=steps,
-                    batch_size=batch_size,
-                    val_pairs=val_pairs,
-                    val_every=val_every,
-                    data_path=data_path,
-                    lambda_mask_norm=lambda_mask_norm,
-                    cross_attn_target_skips=cross_attn_target_skips,
-                    cross_attn_use_attention=cross_attn_use_attention,
-                    cross_attn_window_level=cross_attn_window_level,
-                    cross_attn_window_radius=cross_attn_window_radius,
-                ))
+                for seed in seeds:
+                  # Seed 0 keeps the bare name so an existing single-seed run is reused as a
+                  # member of its own ensemble rather than retrained under a new name.
+                  seed_suffix = '' if seed == 0 else f'_seed{seed}'
+                  configs.append(ExperimentConfig(
+                      seed=seed,
+                      name=f'{ndim}d_{variant}_lam{lam}_{tag}{suffix}{seed_suffix}',
+                      variant=variant,
+                      ndim=ndim,
+                      nb_features=nb_features,
+                      misalign_magnitude=misalign_magnitude,
+                      cascade_scales=cascade_scales,
+                      pyramid_progressive=pyramid_progressive,
+                      deep_supervision=deep_supervision,
+                      lambda_reg=lam,
+                      integration_steps=isteps,
+                      steps=steps,
+                      batch_size=batch_size,
+                      val_pairs=val_pairs,
+                      val_every=val_every,
+                      test_every=test_every,
+                      head_hidden=head_hidden,
+                      head_kernel=head_kernel,
+                      head_image_skip=head_image_skip,
+                      msf_per_level=msf_per_level,
+                      head_lr_mult=head_lr_mult,
+                      data_path=data_path,
+                      lambda_mask_norm=lambda_mask_norm,
+                      cross_attn_target_skips=cross_attn_target_skips,
+                      cross_attn_use_attention=cross_attn_use_attention,
+                      cross_attn_window_level=cross_attn_window_level,
+                      cross_attn_window_radius=cross_attn_window_radius,
+                  ))
     return configs
 
 

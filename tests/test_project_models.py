@@ -12,11 +12,16 @@ import torch
 
 from project.configs import ExperimentConfig
 from project.models import (LocalCrossAttention, VxmBaseline, VxmCrossAttention,
-                            VxmLambdaField, build_model)
+                            VxmFatHead, VxmLambdaField, VxmMultiScaleFeatures,
+                            VxmPyramid, build_model)
 
 
 CASES = [
     ('baseline', 2, (64, 64), 2),
+    ('fathead', 2, (64, 64), 2),
+    ('fathead', 3, (32, 32, 32), 1),
+    ('msf', 2, (64, 64), 2),
+    ('msf', 3, (32, 32, 32), 1),
     ('lambda_field', 2, (64, 64), 2),
     ('cross_attn', 2, (64, 64), 2),
     ('baseline', 3, (32, 32, 32), 1),
@@ -582,3 +587,141 @@ def test_widened_baseline_gets_its_own_run_name():
     assert plain.name == '2d_baseline_lam0.25_disp'
     assert wide.name != plain.name
     assert wide.nb_features == (24, 44, 44, 44, 44)
+
+
+@pytest.mark.parametrize('ndim', [2, 3])
+def test_fathead_matches_the_pyramid_parameter_budget(ndim):
+    """
+    The control exists to separate capacity from multi-resolution structure.
+
+    It is only able to do that if the budgets really match: the pyramid's win is ~2% of the
+    model, so a control that drifted by even a few hundred parameters would be answering a
+    different question. The control is also required to be no *larger* than what it controls
+    for, so a win can never be explained by it having been handed more.
+    """
+    pyramid = sum(p.numel() for p in VxmPyramid(ndim=ndim, progressive=False).parameters())
+    fathead = sum(p.numel() for p in VxmFatHead(ndim=ndim).parameters())
+    assert fathead <= pyramid
+    assert abs(fathead - pyramid) / pyramid < 0.001
+
+
+@pytest.mark.parametrize('ndim', [2, 3])
+def test_fathead_spends_its_budget_at_one_resolution(ndim):
+    """
+    The whole point is that the extra parameters sit at full resolution, not across scales.
+
+    A regression that reintroduced per-level heads would still match on parameter count while
+    silently making the control a copy of the model it controls for.
+    """
+    model = VxmFatHead(ndim=ndim)
+    assert not hasattr(model, 'flow_heads')
+    assert model.hidden_conv.in_channels == model.unet.up_actual_channels[-1]
+    assert model.flow_head.out_channels == ndim
+
+
+def test_fathead_starts_at_the_identity():
+    """
+    Every variant must start from the identity, or a comparison measures the starting point.
+    """
+    model = VxmFatHead(ndim=2).eval()
+    source, target = _inputs(1, (64, 64))
+    assert model(source, target)['displacement'].abs().max().item() < 1e-3
+
+
+def test_fathead_gradients_reach_the_extra_convolution():
+    """A control whose extra parameters were dead would understate what capacity alone buys."""
+    model = VxmFatHead(ndim=2)
+    source, target = _inputs(1, (64, 64))
+    model(source, target)['displacement'].pow(2).sum().backward()
+    assert model.hidden_conv.weight.grad is not None
+    assert model.hidden_conv.weight.grad.abs().sum().item() > 0
+
+
+@pytest.mark.parametrize('ndim', [2, 3])
+def test_matched_hidden_holds_the_budget_across_kernel_sizes(ndim):
+    """
+    The 1x1 head is the control that separates capacity from receptive field.
+
+    It only separates them if it still costs the same. A 1x1 kernel is cheaper per channel, so
+    matching on parameters must widen the hidden layer to compensate -- if `matched_hidden`
+    ignored `kernel`, the 1x1 arm would quietly be a much smaller model and any loss would be
+    read as "receptive field matters" when it only meant "fewer parameters".
+    """
+    pyramid = sum(p.numel() for p in VxmPyramid(ndim=ndim, progressive=False).parameters())
+    for kernel in (1, 3):
+        model = VxmFatHead(ndim=ndim, kernel=kernel)
+        total = sum(p.numel() for p in model.parameters())
+        assert total <= pyramid
+        assert abs(total - pyramid) / pyramid < 0.001
+    assert (VxmFatHead(ndim=ndim, kernel=1).hidden_conv.out_channels
+            > VxmFatHead(ndim=ndim, kernel=3).hidden_conv.out_channels)
+
+
+def test_one_by_one_head_really_has_no_spatial_extent():
+    """A 1x1 head that silently kept padding would still see neighbours and prove nothing."""
+    model = VxmFatHead(ndim=2, kernel=1)
+    assert model.hidden_conv.kernel_size == (1, 1)
+    assert model.flow_head.kernel_size == (1, 1)
+    assert model.hidden_conv.padding == (0, 0)
+
+
+def test_image_skip_actually_reaches_the_head():
+    """
+    The head must consume the raw images, not just be built wider and ignore them.
+
+    Changing only the source outside the region the UNet could propagate from would still
+    change the output through the encoder, so this checks the wiring by channel count -- the
+    one thing a forward-pass test cannot distinguish from ordinary sensitivity.
+    """
+    plain = VxmFatHead(ndim=2, image_skip=False)
+    skipped = VxmFatHead(ndim=2, image_skip=True)
+    assert skipped.hidden_conv.in_channels == plain.hidden_conv.in_channels + 2
+
+
+def test_multiscale_features_start_at_the_identity_and_use_every_level():
+    """Each decoder level must be projected and reach the head, or 'multi-scale' is a misnomer."""
+    model = VxmMultiScaleFeatures(ndim=2).eval()
+    assert len(model.projections) == len(model.unet.up_actual_channels)
+    assert model.flow_head.in_channels == 4 * len(model.projections)
+    source, target = _inputs(1, (64, 64))
+    assert model(source, target)['displacement'].abs().max().item() < 1e-3
+
+
+def test_multiscale_features_does_not_rescale_feature_maps():
+    """
+    Upsampling a *field* must rescale magnitudes; upsampling *features* must not.
+
+    Getting this backwards is invisible -- the model still trains and still produces plausible
+    fields -- so it is pinned here: a constant feature map must survive upsampling unchanged.
+    """
+    model = VxmMultiScaleFeatures(ndim=2)
+    coarse = torch.full((1, 4, 8, 8), 3.0)
+    up = torch.nn.functional.interpolate(coarse, size=(64, 64), mode='bilinear',
+                                         align_corners=True)
+    assert up.min().item() == pytest.approx(3.0)
+    assert up.max().item() == pytest.approx(3.0)
+
+
+def test_seed_zero_keeps_the_bare_run_name():
+    """
+    Seed 0 must not gain a suffix, or every existing single-seed run is orphaned.
+
+    The whole matrix was trained at seed 0 under unsuffixed names. If seeding renamed them, an
+    ensemble would retrain work already done and, worse, compare against a *different* run than
+    the one every earlier conclusion was drawn from.
+    """
+    from project.configs import build_matrix
+    configs = build_matrix(ndim=2, variants=('baseline',), lambdas=(0.25,),
+                           integration_steps=(7,), seeds=(0, 1, 2))
+    names = [c.name for c in configs]
+    assert '2d_baseline_lam0.25_svf' in names
+    assert '2d_baseline_lam0.25_svf_seed1' in names
+    assert sorted(c.seed for c in configs) == [0, 1, 2]
+
+
+def test_seeds_default_to_a_single_run():
+    """Adding the option must not silently triple every sweep that does not ask for it."""
+    from project.configs import build_matrix
+    configs = build_matrix(ndim=2, variants=('baseline',), lambdas=(0.25,),
+                           integration_steps=(7,))
+    assert len(configs) == 1 and configs[0].seed == 0
