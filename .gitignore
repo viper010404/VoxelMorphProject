@@ -64,3 +64,8 @@ overnight.log
 
 # orchestrator logs (regenerable; the eval JSONs under results/ are the record)
 *.log
+
+# local environment and dataset live outside git; the reconcile branch
+# committed these as symlinks, which breaks any other checkout
+.venv
+/data
