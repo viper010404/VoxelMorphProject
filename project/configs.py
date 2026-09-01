@@ -13,7 +13,9 @@ from dataclasses import dataclass, asdict, field
 from typing import List, Optional, Sequence
 
 
-VARIANTS = ('baseline', 'lambda_field', 'cross_attn')
+DEFAULT_FEATURES = (16, 32, 32, 32, 32)
+
+VARIANTS = ('baseline', 'lambda_field', 'cross_attn', 'pyramid', 'cascade')
 
 
 @dataclass
@@ -55,6 +57,34 @@ class ExperimentConfig:
         Number of validation pairs used for model selection.
     attn_heads : int
         Attention heads for the `cross_attn` variant.
+    cross_attn_target_skips : bool
+        For `cross_attn`, fuse the target stream's skip connections into the decoder. Off by
+        default so the original formulation reproduces exactly; see
+        `models.VxmCrossAttention` for the measured effect.
+    cross_attn_use_attention : bool
+        For `cross_attn`, whether to cross-attend at the bottleneck. False is the ablation
+        control isolating what the attention itself contributes.
+    cross_attn_window_level : int
+        Skip level for local windowed cross-attention, or -1 to disable. Adds a `_win<level>`
+        suffix to the run name.
+    cross_attn_window_radius : int
+        Neighbourhood radius in tokens for that attention.
+    cascade_scales : sequence of int
+        For `cascade`, the downsampling factor each stage runs at, finest last. (2, 1) is
+        coarse-to-fine; (1, 1) is the same-resolution control that isolates iteration from
+        multi-resolution. Adds a `_c2f<scales>` suffix.
+    pyramid_progressive : bool
+        For `pyramid`, warp each level's skip features by the field accumulated so far. False
+        keeps the per-level flow heads but predicts levels independently, isolating deep
+        supervision from progressive warping. Adds a `_noprog` suffix.
+    deep_supervision : bool
+        Score every pyramid level, not just the final field. False trains the pyramid on the
+        final field alone, isolating the architecture from the objective. Adds `_nods`.
+    misalign_magnitude : float
+        Mean magnitude, in voxels, of a synthetic smooth deformation applied to the moving image
+        during training. 0 leaves the dataset as shipped. neurite-OASIS is affinely pre-aligned,
+        so its residual motion is ~1.7 voxels; raising this creates the large-displacement regime
+        in which explicit correspondence matching is supposed to help. Adds a `_mis<n>` suffix.
     lambda_mask_norm : bool
         For `lambda_field`, normalise the weight map to mean 1 over the brain mask rather than
         over the whole image. Off by default so earlier runs reproduce exactly; see
@@ -82,6 +112,14 @@ class ExperimentConfig:
     val_pairs: int = 64
     attn_heads: int = 4
     lambda_mask_norm: bool = False
+    cross_attn_target_skips: bool = False
+    cross_attn_use_attention: bool = True
+    cross_attn_window_level: int = -1
+    cross_attn_window_radius: int = 2
+    misalign_magnitude: float = 0.0
+    cascade_scales: Sequence[int] = (2, 1)
+    pyramid_progressive: bool = True
+    deep_supervision: bool = True
     data_path: str = 'data/oasis2d.npz'
     output_root: str = 'results'
 
@@ -91,6 +129,7 @@ class ExperimentConfig:
         if self.ndim not in (2, 3):
             raise ValueError(f'ndim must be 2 or 3, got {self.ndim}')
         self.nb_features = tuple(self.nb_features)
+        self.cascade_scales = tuple(self.cascade_scales)
 
     @property
     def output_dir(self) -> Path:
@@ -124,6 +163,16 @@ def build_matrix(
     data_path: Optional[str] = None,
     batch_size: Optional[int] = None,
     lambda_mask_norm: bool = False,
+    cross_attn_target_skips: bool = False,
+    cross_attn_use_attention: bool = True,
+    cross_attn_window_level: int = -1,
+    cross_attn_window_radius: int = 2,
+    nb_features: Optional[Sequence[int]] = None,
+    misalign_magnitude: float = 0.0,
+    cascade_scales: Sequence[int] = (2, 1),
+    pyramid_progressive: bool = True,
+    deep_supervision: bool = True,
+    sweep_variants: Sequence[str] = ('baseline', 'lambda_field'),
 ) -> List[ExperimentConfig]:
     """
     Build the sweep of configurations for the bake-off.
@@ -144,7 +193,9 @@ def build_matrix(
     variants : sequence of str, optional
         Which model variants to include.
     steps : int or None, optional
-        Training iterations; defaults to 20000 in 2D and 20000 in 3D.
+        Training iterations; defaults to 20000. Any other value adds an `_s<n>k` suffix, keeping
+        each training budget in its own namespace -- runs at different budgets are not comparable
+        and must not collide.
     data_path : str or None, optional
         Override the dataset cache path.
     batch_size : int or None, optional
@@ -152,6 +203,20 @@ def build_matrix(
     lambda_mask_norm : bool, optional
         Normalise the lambda-field weight map within the brain mask. Adds a `_maskn` suffix to
         the run name so the two formulations never collide in `results/`.
+    cross_attn_target_skips : bool, optional
+        Fuse the target encoder pyramid into the cross-attention decoder. Adds a `_tskip` suffix
+        to the run name.
+    cross_attn_use_attention : bool, optional
+        Set False for the ablation that keeps the target skips but removes the attention. Adds a
+        `_noattn` suffix.
+    nb_features : sequence of int or None, optional
+        UNet width per level. The *length* sets the depth, and so the bottleneck's downsampling
+        factor: five levels give 32x, where every displacement in this dataset is smaller than
+        one token. Shorter is coarser-to-finer. Adds a `_d<levels>` suffix unless it is the
+        five-level default. Spatial dims must stay divisible by `2 ** len(nb_features)`.
+    sweep_variants : sequence of str, optional
+        Which variants get the full lambda sweep; the rest run at the middle value only. Defaults
+        to the two whose regularisation is under test, keeping the schedule affordable.
 
     Returns
     -------
@@ -163,6 +228,9 @@ def build_matrix(
         batch_size = 16 if ndim == 2 else 1
     if steps is None:
         steps = 20000
+    if nb_features is None:
+        nb_features = DEFAULT_FEATURES
+    nb_features = tuple(nb_features)
 
     # A 3D validation pass costs ~1.8 s per pair (Dice over 33 structures on 6.9M voxels, plus
     # the Jacobian determinant), so the 2D settings would add ~19 min to every run. Validate
@@ -174,18 +242,53 @@ def build_matrix(
     for variant in variants:
         # Sweep lambda only where it is the quantity under test; cross-attention runs at the
         # middle value so the schedule stays affordable.
-        if variant in ('baseline', 'lambda_field'):
+        if variant in sweep_variants:
             sweep = tuple(lambdas)
         else:
             sweep = (lambdas[len(lambdas) // 2],)
         for lam in sweep:
             for isteps in integration_steps:
                 tag = 'svf' if isteps > 0 else 'disp'
-                suffix = '_maskn' if (lambda_mask_norm and variant == 'lambda_field') else ''
+                suffix = ''
+                if lambda_mask_norm and variant == 'lambda_field':
+                    suffix = '_maskn'
+                if variant == 'cross_attn':
+                    suffix = '_tskip' if cross_attn_target_skips else ''
+                    if not cross_attn_use_attention:
+                        suffix += '_noattn'
+                    if cross_attn_window_level >= 0:
+                        suffix += f'_win{cross_attn_window_level}'
+                if len(nb_features) != 5:
+                    suffix += f'_d{len(nb_features)}'
+                # Depth alone is not enough to identify the architecture: a *widened* UNet of the
+                # same depth would otherwise reuse the plain baseline's directory and overwrite
+                # its results with a different model's numbers. Capacity controls need their own
+                # namespace precisely because they are meant to be compared against it.
+                if tuple(nb_features) != DEFAULT_FEATURES[:len(nb_features)]:
+                    suffix += '_f' + '-'.join(str(width) for width in nb_features)
+                if variant == 'cascade':
+                    suffix += '_c2f' + ''.join(str(x) for x in cascade_scales)
+                if variant == 'pyramid':
+                    if not pyramid_progressive:
+                        suffix += '_noprog'
+                    if not deep_supervision:
+                        suffix += '_nods'
+                if misalign_magnitude > 0:
+                    suffix += f'_mis{misalign_magnitude:g}'
+                # A different training budget is a different experiment, not a newer version of
+                # the same one: without this the 80k runs would overwrite the 20k matrix in place
+                # and --skip-existing would skip them entirely, silently leaving no reference.
+                if steps != 20000:
+                    suffix += f'_s{steps // 1000}k'
                 configs.append(ExperimentConfig(
                     name=f'{ndim}d_{variant}_lam{lam}_{tag}{suffix}',
                     variant=variant,
                     ndim=ndim,
+                    nb_features=nb_features,
+                    misalign_magnitude=misalign_magnitude,
+                    cascade_scales=cascade_scales,
+                    pyramid_progressive=pyramid_progressive,
+                    deep_supervision=deep_supervision,
                     lambda_reg=lam,
                     integration_steps=isteps,
                     steps=steps,
@@ -194,6 +297,10 @@ def build_matrix(
                     val_every=val_every,
                     data_path=data_path,
                     lambda_mask_norm=lambda_mask_norm,
+                    cross_attn_target_skips=cross_attn_target_skips,
+                    cross_attn_use_attention=cross_attn_use_attention,
+                    cross_attn_window_level=cross_attn_window_level,
+                    cross_attn_window_radius=cross_attn_window_radius,
                 ))
     return configs
 

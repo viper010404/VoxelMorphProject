@@ -1,0 +1,38 @@
+{
+  "baseline": "2d_cross_attn_lam0.1_svf",
+  "split": "test",
+  "comparisons": {
+    "2d_cross_attn_lam0.1_svf_tskip": {
+      "dice": {
+        "n": 100,
+        "baseline_mean": 0.6685836569721694,
+        "candidate_mean": 0.745046256034984,
+        "delta_mean": 0.07646259906281436,
+        "delta_std": 0.03754036729972152,
+        "improved_pairs": 98,
+        "t_p": 3.5125337741788275e-37,
+        "wilcoxon_p": 4.9610417082651575e-18
+      },
+      "folding_fraction": {
+        "n": 100,
+        "baseline_mean": 0.0,
+        "candidate_mean": 0.0,
+        "delta_mean": 0.0,
+        "delta_std": 0.0,
+        "improved_pairs": 0,
+        "t_p": 1.0,
+        "wilcoxon_p": 1.0
+      },
+      "inverse_consistency": {
+        "n": 100,
+        "baseline_mean": 0.013832346349954606,
+        "candidate_mean": 0.01895012945868075,
+        "delta_mean": 0.005117783108726143,
+        "delta_std": 0.0039055899132568275,
+        "improved_pairs": 3,
+        "t_p": 2.369057048672116e-23,
+        "wilcoxon_p": 7.78699366986276e-18
+      }
+    }
+  }
+}

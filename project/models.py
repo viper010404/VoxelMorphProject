@@ -19,6 +19,7 @@ lambda_map : (B, 1, *spatial)
     Present for the lambda-field variant. Normalised to mean 1 (see `VxmLambdaField`).
 """
 
+import math
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import torch
@@ -287,6 +288,120 @@ class VxmLambdaField(nn.Module):
         return bounded / masked_mean
 
 
+class LocalCrossAttention(nn.Module):
+    """
+    Cross-attention restricted to a local neighbourhood, applied at an encoder skip level.
+
+    Global attention at the bottleneck cannot work on this dataset, and the reason is geometric
+    rather than architectural. The bottleneck is 32x downsampled, so one token spans 32 voxels,
+    while the largest nonlinear displacement anywhere in neurite-OASIS is 14.2 voxels (median
+    1.7) -- the data is affinely pre-aligned, so only the fine residual is left. Every match the
+    network needs to express is therefore *smaller than a single token*, and no amount of heads
+    or positional encoding recovers detail the representation never had.
+
+    Moving attention to a resolution where the motion is visible runs into cost: full attention
+    over level 2 (4x) would be 1.1e4 tokens in 2D and 1.1e5 in 3D, i.e. 1.2e10 pairs. Restricting
+    each source token to a `radius`-token neighbourhood of the target makes it O(N * K) with
+    K = (2*radius+1)**ndim, which is what makes fine-resolution attention tractable -- the same
+    move Swin-based registration networks make, and the same structure as an optical-flow cost
+    volume with a bounded search range.
+
+    Choose `radius` so the window covers the expected displacement: at 8x downsampling a radius
+    of 2 spans +-16 voxels, just above the 14.2-voxel maximum.
+
+    The output projection is zero-initialised, so the module starts as an exact no-op and the
+    surrounding network is unchanged at step 0.
+
+    Parameters
+    ----------
+    channels : int
+        Feature width at the level this operates on.
+    ndim : int
+        Spatial dimensionality.
+    radius : int
+        Neighbourhood radius in tokens; the window is `2 * radius + 1` per axis.
+    heads : int
+        Attention heads; `channels` must be divisible by this.
+    """
+
+    def __init__(self, channels: int, ndim: int, radius: int = 2, heads: int = 4) -> None:
+        super().__init__()
+        if channels % heads:
+            raise ValueError(f'channels {channels} must be divisible by heads {heads}')
+        self.ndim = ndim
+        self.radius = radius
+        self.heads = heads
+        self.head_dim = channels // heads
+
+        conv = nn.Conv2d if ndim == 2 else nn.Conv3d
+        self.query = conv(channels, channels, kernel_size=1)
+        self.key = conv(channels, channels, kernel_size=1)
+        self.value = conv(channels, channels, kernel_size=1)
+        self.project = conv(channels, channels, kernel_size=1)
+        # Start as a no-op: the level behaves exactly as it did before attention was added.
+        nn.init.zeros_(self.project.weight)
+        nn.init.zeros_(self.project.bias)
+
+    def _neighbourhoods(self, features: torch.Tensor) -> torch.Tensor:
+        """
+        Extract each position's local neighbourhood.
+
+        Parameters
+        ----------
+        features : torch.Tensor
+            Shape (B, C, *spatial).
+
+        Returns
+        -------
+        torch.Tensor
+            Shape (B, C, N, K) with N positions and K neighbours each.
+        """
+        width = 2 * self.radius + 1
+        padded = torch.nn.functional.pad(features, (self.radius,) * (2 * self.ndim))
+        for axis in range(self.ndim):
+            padded = padded.unfold(2 + axis, width, 1)
+        # (B, C, *spatial, *window) -> (B, C, N, K)
+        batch, channels = padded.shape[:2]
+        spatial = padded.shape[2:2 + self.ndim]
+        positions = 1
+        for size in spatial:
+            positions *= size
+        return padded.reshape(batch, channels, positions, width ** self.ndim)
+
+    def forward(self, source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Refine `source` with locally matched `target` context.
+
+        Parameters
+        ----------
+        source, target : torch.Tensor
+            Features of shape (B, C, *spatial) from the two encoder streams.
+
+        Returns
+        -------
+        torch.Tensor
+            A residual update for `source`, same shape; zero at initialisation.
+        """
+        batch = source.shape[0]
+        spatial = source.shape[2:]
+
+        query = self.query(source).reshape(batch, self.heads, self.head_dim, -1)
+        keys = self._neighbourhoods(self.key(target))
+        values = self._neighbourhoods(self.value(target))
+        neighbours = keys.shape[-1]
+
+        keys = keys.reshape(batch, self.heads, self.head_dim, -1, neighbours)
+        values = values.reshape(batch, self.heads, self.head_dim, -1, neighbours)
+
+        # (B, heads, N, K): each source token scored against its own target neighbourhood only.
+        scores = (query.unsqueeze(-1) * keys).sum(dim=2) / (self.head_dim ** 0.5)
+        weights = torch.softmax(scores, dim=-1)
+
+        attended = (weights.unsqueeze(2) * values).sum(dim=-1)
+        attended = attended.reshape(batch, self.heads * self.head_dim, *spatial)
+        return self.project(attended)
+
+
 class VxmCrossAttention(nn.Module):
     """
     VoxelMorph with a two-stream encoder and cross-attention at the bottleneck.
@@ -310,6 +425,22 @@ class VxmCrossAttention(nn.Module):
     Skip connections come from the **source** stream, since the decoder's job is to produce a
     field defined on the source grid.
 
+    **That last choice is the one that breaks it.** With source-only skips the target reaches the
+    decoder at exactly one scale -- the bottleneck, 5x6x7 in 3D, where a single token spans 32
+    voxels. Measured on this dataset, every displacement the baseline predicts inside the brain
+    is smaller than one such token (median 1.7, max 14.2 voxels): neurite-OASIS is affinely
+    pre-aligned, so only the fine nonlinear residual is left. The decoder is therefore asked to
+    align two images while seeing only one of them at any resolution the motion actually lives
+    at, and the trained model under-deforms in response (mean |displacement| 0.68 voxels against
+    the baseline's 1.01).
+
+    Setting `target_skips` fuses the target stream's pyramid into the decoder alongside the
+    source's, restoring per-scale correspondence. Measured effect at matched training steps:
+    +0.062 Dice in 2D and +0.088 in 3D, closing ~89% of the gap to the baseline. Adding
+    positional encoding to the attention instead was worth nothing either way (2D: 0.6683
+    without skips, 0.7379 with, against 0.7367 for skips alone) -- position cannot help while
+    the only shared representation is 32x coarser than the motion.
+
     Parameters
     ----------
     ndim : int
@@ -320,6 +451,21 @@ class VxmCrossAttention(nn.Module):
         Scaling-and-squaring steps; 0 for a plain displacement field.
     attn_heads : int
         Number of attention heads.
+    target_skips : bool
+        Fuse the target stream's skip connections into the decoder. Off by default so the
+        original formulation reproduces exactly.
+    window_level : int
+        Encoder skip level at which to apply local windowed cross-attention, or -1 to disable.
+        Level 3 is 8x downsampled, where a radius of 2 spans +-16 voxels against a 14.2-voxel
+        maximum displacement. See `LocalCrossAttention` for why the bottleneck cannot work.
+    window_radius : int
+        Neighbourhood radius in tokens for the windowed attention.
+    use_attention : bool
+        Whether to cross-attend at the bottleneck at all. Setting this False alongside
+        `target_skips` is the control that asks whether the attention earns its place: if the
+        two score the same, the gain came from giving the decoder both images, not from the
+        attention. The attention module is not constructed when disabled, so the ablation is
+        also strictly smaller.
     """
 
     def __init__(
@@ -328,10 +474,17 @@ class VxmCrossAttention(nn.Module):
         nb_features: Sequence[int] = (16, 32, 32, 32, 32),
         integration_steps: int = 0,
         attn_heads: int = 4,
+        target_skips: bool = False,
+        use_attention: bool = True,
+        window_level: int = -1,
+        window_radius: int = 2,
     ) -> None:
         super().__init__()
         self.ndim = ndim
         self.integration_steps = integration_steps
+        self.target_skips = target_skips
+        self.use_attention = use_attention
+        self.window_level = window_level
 
         # in_channels=1: each stream encodes a single image.
         self.unet = ne.nn.models.BasicUNet(
@@ -341,18 +494,88 @@ class VxmCrossAttention(nn.Module):
             nb_features=nb_features,
         )
 
-        bottleneck_channels = self.unet.lowest_resolution_conv_block.out_channels
-        self.attention = nn.MultiheadAttention(
-            embed_dim=bottleneck_channels,
-            num_heads=attn_heads,
-            batch_first=True,
-        )
-        self.attention_norm = nn.LayerNorm(bottleneck_channels)
+        if target_skips:
+            self.skip_fusion = self._build_skip_fusion(ndim, self.unet.down_actual_channels)
+
+        if window_level >= 0:
+            self.local_attention = LocalCrossAttention(
+                channels=self.unet.down_actual_channels[window_level],
+                ndim=ndim,
+                radius=window_radius,
+                heads=attn_heads,
+            )
+
+        if use_attention:
+            bottleneck_channels = self.unet.lowest_resolution_conv_block.out_channels
+            self.attention = nn.MultiheadAttention(
+                embed_dim=bottleneck_channels,
+                num_heads=attn_heads,
+                batch_first=True,
+            )
+            self.attention_norm = nn.LayerNorm(bottleneck_channels)
 
         self.flow_layer = _init_flow_layer(ndim)
         self.spatial_transformer = vxm.nn.modules.SpatialTransformer()
         if integration_steps > 0:
             self.integrator = vxm.nn.modules.IntegrateVelocityField(steps=integration_steps)
+
+    @staticmethod
+    def _build_skip_fusion(ndim: int, channels: Sequence[int]) -> nn.ModuleList:
+        """
+        One 1x1 convolution per skip level, fusing concatenated source and target features.
+
+        Each layer maps `2C -> C`, so the decoder's input widths are unchanged and the fix costs
+        only 8,848 parameters in 3D (+2.6% against the baseline's 333,241) -- the matched-capacity
+        comparison against the baseline survives, and the gain cannot be attributed to size.
+
+        The initialisation matters as much as the layer: the source half is set to the identity
+        and the target half to zero, so at step 0 the fused skip *is* the source skip and the
+        model is numerically identical to the source-only formulation. Target information is
+        therefore something the network switches on if it helps, rather than a distribution shift
+        imposed on a decoder that has not yet learned to use it.
+
+        Parameters
+        ----------
+        ndim : int
+            Spatial dimensionality, selecting Conv2d or Conv3d.
+        channels : sequence of int
+            Encoder width at each skip level.
+
+        Returns
+        -------
+        nn.ModuleList
+            One fusion convolution per level, in encoder order.
+        """
+        conv = nn.Conv2d if ndim == 2 else nn.Conv3d
+        fusion = nn.ModuleList([conv(2 * width, width, kernel_size=1) for width in channels])
+        for layer, width in zip(fusion, channels):
+            nn.init.zeros_(layer.weight)
+            nn.init.zeros_(layer.bias)
+            with torch.no_grad():
+                identity = torch.eye(width).view(width, width, *([1] * ndim))
+                layer.weight[:, :width].copy_(identity)
+        return fusion
+
+    def _fuse_skips(
+        self,
+        source_skips: List[torch.Tensor],
+        target_skips: List[torch.Tensor],
+    ) -> List[torch.Tensor]:
+        """
+        Combine the two encoder pyramids level by level.
+
+        Parameters
+        ----------
+        source_skips, target_skips : list of torch.Tensor
+            Encoder features in encoder order, one per level.
+
+        Returns
+        -------
+        list of torch.Tensor
+            Fused skips with the same shapes as `source_skips`.
+        """
+        return [fusion(torch.cat([source, target], dim=1))
+                for fusion, source, target in zip(self.skip_fusion, source_skips, target_skips)]
 
     def _encode(self, image: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """
@@ -426,10 +649,19 @@ class VxmCrossAttention(nn.Module):
     def forward(self, source: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Register `source` to `target`; see module docstring for returned keys."""
         source_feat, source_skips = self._encode(source)
-        target_feat, _ = self._encode(target)
+        target_feat, target_skips = self._encode(target)
 
-        fused = self._cross_attend(source_feat, target_feat)
-        velocity = self.flow_layer(self._decode(fused, source_skips))
+        if self.window_level >= 0:
+            level = self.window_level
+            source_skips = list(source_skips)
+            source_skips[level] = source_skips[level] + self.local_attention(
+                source_skips[level], target_skips[level])
+
+        skips = self._fuse_skips(source_skips, target_skips) if self.target_skips else source_skips
+
+        fused = self._cross_attend(source_feat, target_feat) if self.use_attention \
+            else source_feat
+        velocity = self.flow_layer(self._decode(fused, skips))
 
         if self.integration_steps > 0:
             displacement = self.integrator(velocity)
@@ -443,6 +675,287 @@ class VxmCrossAttention(nn.Module):
         if self.integration_steps > 0:
             outputs['velocity'] = velocity
         return outputs
+
+
+class VxmPyramid(nn.Module):
+    """
+    VoxelMorph with a coarse-to-fine displacement pyramid and optional deep supervision.
+
+    The baseline emits one displacement field from a single output layer at full resolution.
+    Every scale of motion has to come out of that one head, and nothing obliges the coarse half
+    of the decoder to contribute: measured on a trained model, deleting the bottleneck entirely
+    costs only 0.007 Dice, so those layers had drifted into being nearly decorative.
+
+    This variant makes each decoder level accountable for the motion at its own scale, taking
+    the two ideas behind pyramid registration networks and applying them to *this* UNet rather
+    than replacing it with a stack of separate networks:
+
+    * **Flow head per level.** Each decoder level emits its own displacement field, so the
+      hierarchy exists in the *output* and not only in the features.
+    * **Progressive warping.** Before a level's decoder block runs, its skip features are warped
+      by the field accumulated so far, so each level only has to explain the residual left by
+      the ones above it and sees features already brought into rough alignment. This establishes
+      correspondence by *moving* features rather than by matching them, which sidesteps the token
+      -resolution problem that made attention useless here.
+
+    Fields compose additively in the warped frame -- `field = upsample(field) + residual` after
+    warping the skip. That is the standard residual-flow formulation and is exact only to first
+    order, but the residuals here are small (median motion is 1.7 voxels) and it avoids the
+    upstream `compose` batch-detection bug entirely.
+
+    Upsampling a displacement field must also rescale it: a field is measured in voxels, so
+    doubling the grid doubles every displacement. Forgetting that silently halves the coarse
+    contribution at every level.
+
+    With `integration_steps > 0` the *composed* field is treated as a stationary velocity field
+    and integrated once at the end, rather than integrating at every level.
+
+    Parameters
+    ----------
+    ndim : int
+        Spatial dimensionality.
+    nb_features : sequence of int
+        UNet features per level.
+    integration_steps : int
+        Scaling-and-squaring steps applied to the final composed field; 0 for a displacement.
+    progressive : bool
+        Warp each level's skip features by the field so far. False keeps the per-level flow
+        heads but predicts each level independently, which isolates how much of any gain comes
+        from the warping rather than from deep supervision alone.
+    """
+
+    def __init__(
+        self,
+        ndim: int,
+        nb_features: Sequence[int] = (16, 32, 32, 32, 32),
+        integration_steps: int = 0,
+        progressive: bool = True,
+    ) -> None:
+        super().__init__()
+        self.ndim = ndim
+        self.integration_steps = integration_steps
+        self.progressive = progressive
+
+        self.unet = ne.nn.models.BasicUNet(
+            ndim=ndim,
+            in_channels=2,
+            out_channels=ndim,
+            nb_features=nb_features,
+        )
+
+        conv = nn.Conv2d if ndim == 2 else nn.Conv3d
+        self.flow_heads = nn.ModuleList([
+            conv(width, ndim, kernel_size=3, padding=1)
+            for width in self.unet.up_actual_channels
+        ])
+        for head in self.flow_heads:
+            # Same near-zero start as the baseline's flow layer: the model begins at the
+            # identity, so the similarity term has a usable gradient from step one.
+            nn.init.normal_(head.weight, mean=0.0, std=1e-5)
+            nn.init.zeros_(head.bias)
+
+        self.spatial_transformer = vxm.nn.modules.SpatialTransformer()
+        if integration_steps > 0:
+            self.integrator = vxm.nn.modules.IntegrateVelocityField(steps=integration_steps)
+
+    def _upsample_field(self, field: torch.Tensor, shape: Sequence[int]) -> torch.Tensor:
+        """
+        Resample a displacement field to a finer grid, rescaling its magnitudes.
+
+        Parameters
+        ----------
+        field : torch.Tensor
+            Displacement field of shape (B, ndim, *spatial), in voxels.
+        shape : sequence of int
+            Target spatial shape.
+
+        Returns
+        -------
+        torch.Tensor
+            Field on the new grid, with each component scaled by that axis' size ratio.
+        """
+        mode = 'bilinear' if self.ndim == 2 else 'trilinear'
+        resampled = torch.nn.functional.interpolate(
+            field, size=tuple(shape), mode=mode, align_corners=True)
+        for axis, (new, old) in enumerate(zip(shape, field.shape[2:])):
+            resampled[:, axis] = resampled[:, axis] * (new / old)
+        return resampled
+
+    def forward(self, source: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Register `source` to `target`; returns the per-level fields under `pyramid`."""
+        features = torch.cat([source, target], dim=1)
+
+        skips: List[torch.Tensor] = []
+        for block in self.unet.downsampling_conv_blocks:
+            features, skip = block(features)
+            skips.append(skip)
+        features = self.unet.lowest_resolution_conv_block(features)
+
+        field = None
+        pyramid: List[torch.Tensor] = []
+
+        for head, block, skip in zip(self.flow_heads, self.unet.upsampling_conv_blocks,
+                                     reversed(skips)):
+            if field is not None:
+                field = self._upsample_field(field, skip.shape[2:])
+                if self.progressive:
+                    skip = self.spatial_transformer(skip, field)
+
+            features = block(features, skip)
+            residual = head(features)
+            field = residual if field is None else field + residual
+            pyramid.append(field)
+
+        velocity = field
+        displacement = self.integrator(velocity) if self.integration_steps > 0 else velocity
+
+        outputs = {
+            'displacement': displacement,
+            'warped_source': self.spatial_transformer(source, displacement),
+            'pyramid': pyramid,
+        }
+        if self.integration_steps > 0:
+            outputs['velocity'] = velocity
+        return outputs
+
+
+def _resample_field(field: torch.Tensor, shape: Sequence[int], ndim: int) -> torch.Tensor:
+    """
+    Resample a displacement field to another grid, rescaling its magnitudes.
+
+    A displacement is measured in voxels, so moving a field to a grid twice as fine doubles every
+    displacement. Omitting the rescale is silent -- shapes stay valid and training proceeds -- and
+    simply discards part of the coarse stage's contribution.
+
+    Parameters
+    ----------
+    field : torch.Tensor
+        Displacement field of shape (B, ndim, *spatial), in voxels.
+    shape : sequence of int
+        Target spatial shape.
+    ndim : int
+        Spatial dimensionality.
+
+    Returns
+    -------
+    torch.Tensor
+        Field on the new grid, each component scaled by that axis' size ratio.
+    """
+    mode = 'bilinear' if ndim == 2 else 'trilinear'
+    resampled = torch.nn.functional.interpolate(
+        field, size=tuple(shape), mode=mode, align_corners=True)
+    for axis, (new, old) in enumerate(zip(shape, field.shape[2:])):
+        resampled[:, axis] = resampled[:, axis] * (new / old)
+    return resampled
+
+
+class VxmCascade(nn.Module):
+    """
+    Two-stage cascaded refinement: register, warp, then register the residual and compose.
+
+    The single-pass network has to produce the whole deformation in one shot. Running it twice --
+    warping the moving image by the first prediction and letting a second network correct the
+    now nearly-aligned pair -- means the second stage only ever sees a small residual, which is a
+    much easier regression problem.
+
+    Transforms are **composed, not added**. With the convention `moved(x) = source(x + u(x))`,
+    applying stage 1 and then stage 2 gives
+
+        u(x) = u2(x) + u1(x + u2(x))
+
+    i.e. `u2 + warp(u1, u2)`. Adding the fields instead would be wrong whenever the first stage
+    moves anything appreciably, because the second stage's correction is expressed in the frame
+    the first stage created, not the original one.
+
+    `stage_scales` sets the resolution each stage runs at as a downsampling factor, so (2, 1) is
+    coarse-to-fine -- a half-resolution first pass then a full-resolution correction -- and (1, 1)
+    runs both at full resolution. A stage at scale `s` drops `log2(s)` UNet levels, since the
+    grid it sees is that much smaller; this is what keeps the coarse stage's parameter count down
+    and makes (2, 1) cheaper than (1, 1) rather than merely different.
+
+    Note the two arms test different hypotheses. (2, 1) is the coarse-to-fine argument from the
+    paper's receptive-field discussion; (1, 1) is the control that isolates *iteration* from
+    *multi-resolution*, by iterating without ever changing scale. If they score the same, the
+    resolution schedule is not what is doing the work.
+
+    With `integration_steps > 0` each stage integrates its own velocity, so every stage is a
+    diffeomorphism and so is their composition.
+
+    Parameters
+    ----------
+    ndim : int
+        Spatial dimensionality.
+    nb_features : sequence of int
+        UNet features per level for the full-resolution stage; coarser stages drop levels.
+    integration_steps : int
+        Scaling-and-squaring steps applied within each stage.
+    stage_scales : sequence of int
+        Downsampling factor per stage, finest last. Each must be a power of two.
+    """
+
+    def __init__(
+        self,
+        ndim: int,
+        nb_features: Sequence[int] = (16, 32, 32, 32, 32),
+        integration_steps: int = 0,
+        stage_scales: Sequence[int] = (2, 1),
+    ) -> None:
+        super().__init__()
+        self.ndim = ndim
+        self.integration_steps = integration_steps
+        self.stage_scales = tuple(stage_scales)
+
+        self.stages = nn.ModuleList()
+        for scale in self.stage_scales:
+            dropped = int(round(math.log2(scale)))
+            if 2 ** dropped != scale:
+                raise ValueError(f'stage_scales must be powers of two, got {scale}')
+            levels = len(nb_features) - dropped
+            if levels < 1:
+                raise ValueError(f'scale {scale} leaves no UNet levels for {len(nb_features)}')
+            self.stages.append(vxm.nn.models.VxmPairwise(
+                ndim=ndim,
+                source_channels=1,
+                target_channels=1,
+                nb_features=tuple(nb_features[:levels]),
+                integration_steps=integration_steps,
+            ))
+
+        self.spatial_transformer = vxm.nn.modules.SpatialTransformer()
+
+    def forward(self, source: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Register `source` to `target`; returns each stage's field under `stages`."""
+        full = source.shape[2:]
+        mode = 'bilinear' if self.ndim == 2 else 'trilinear'
+
+        field = None
+        warped = source
+        per_stage: List[torch.Tensor] = []
+
+        for stage, scale in zip(self.stages, self.stage_scales):
+            if scale > 1:
+                small = tuple(size // scale for size in full)
+                stage_source = torch.nn.functional.interpolate(
+                    warped, size=small, mode=mode, align_corners=True)
+                stage_target = torch.nn.functional.interpolate(
+                    target, size=small, mode=mode, align_corners=True)
+            else:
+                stage_source, stage_target = warped, target
+
+            update = stage(stage_source, stage_target, return_field_type='displacement')
+            if scale > 1:
+                update = _resample_field(update, full, self.ndim)
+
+            # Compose in the frame the earlier stages created, rather than adding.
+            field = update if field is None else update + self.spatial_transformer(field, update)
+            per_stage.append(field)
+            warped = self.spatial_transformer(source, field)
+
+        return {
+            'displacement': field,
+            'warped_source': warped,
+            'stages': per_stage,
+        }
 
 
 def build_model(config: ExperimentConfig) -> nn.Module:
@@ -469,7 +982,15 @@ def build_model(config: ExperimentConfig) -> nn.Module:
         return VxmBaseline(**common)
     if config.variant == 'lambda_field':
         return VxmLambdaField(mask_normalise=config.lambda_mask_norm, **common)
+    if config.variant == 'cascade':
+        return VxmCascade(stage_scales=config.cascade_scales, **common)
+    if config.variant == 'pyramid':
+        return VxmPyramid(progressive=config.pyramid_progressive, **common)
     if config.variant == 'cross_attn':
-        return VxmCrossAttention(attn_heads=config.attn_heads, **common)
+        return VxmCrossAttention(attn_heads=config.attn_heads,
+                                 target_skips=config.cross_attn_target_skips,
+                                 use_attention=config.cross_attn_use_attention,
+                                 window_level=config.cross_attn_window_level,
+                                 window_radius=config.cross_attn_window_radius, **common)
 
     raise ValueError(f"unknown variant '{config.variant}'")

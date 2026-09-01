@@ -1,0 +1,75 @@
+{
+  "baseline": "2d_baseline_lam0.25_disp",
+  "split": "test",
+  "comparisons": {
+    "2d_cascade_lam0.25_disp_c2f21": {
+      "dice": {
+        "n": 100,
+        "baseline_mean": 0.7544197503668189,
+        "candidate_mean": 0.760160585753151,
+        "delta_mean": 0.005740835386332078,
+        "delta_std": 0.008893332570272305,
+        "improved_pairs": 79,
+        "t_p": 4.0321183919254035e-09,
+        "wilcoxon_p": 4.4702031274545934e-09
+      },
+      "folding_fraction": {
+        "n": 100,
+        "baseline_mean": 0.00012890625,
+        "candidate_mean": 5.0130208333333335e-05,
+        "delta_mean": -7.877604166666666e-05,
+        "delta_std": 0.0006722843698404787,
+        "improved_pairs": 3,
+        "t_p": 0.24410302696252423,
+        "wilcoxon_p": 0.27332167829229814
+      },
+      "inverse_consistency": null
+    },
+    "2d_cascade_lam0.25_disp_c2f11": {
+      "dice": {
+        "n": 100,
+        "baseline_mean": 0.7544197503668189,
+        "candidate_mean": 0.7611295482570837,
+        "delta_mean": 0.006709797890264665,
+        "delta_std": 0.008533595904292424,
+        "improved_pairs": 80,
+        "t_p": 4.7163488377296625e-12,
+        "wilcoxon_p": 3.377619257287572e-11
+      },
+      "folding_fraction": {
+        "n": 100,
+        "baseline_mean": 0.00012890625,
+        "candidate_mean": 6.4453125e-05,
+        "delta_mean": -6.445312500000002e-05,
+        "delta_std": 0.00037215825633588994,
+        "improved_pairs": 4,
+        "t_p": 0.08641068999752766,
+        "wilcoxon_p": 0.06788915486182899
+      },
+      "inverse_consistency": null
+    },
+    "2d_baseline_lam0.25_disp_f24-44-44-44-44": {
+      "dice": {
+        "n": 100,
+        "baseline_mean": 0.7544197503668189,
+        "candidate_mean": 0.7575083418734875,
+        "delta_mean": 0.003088591506668592,
+        "delta_std": 0.007704917303870279,
+        "improved_pairs": 65,
+        "t_p": 0.00011848777798474219,
+        "wilcoxon_p": 0.00014710248957640129
+      },
+      "folding_fraction": {
+        "n": 100,
+        "baseline_mean": 0.00012890625,
+        "candidate_mean": 0.00013769531250000001,
+        "delta_mean": 8.789062499999998e-06,
+        "delta_std": 0.00018267497194748635,
+        "improved_pairs": 2,
+        "t_p": 0.6314849589938341,
+        "wilcoxon_p": 0.15472892348537853
+      },
+      "inverse_consistency": null
+    }
+  }
+}

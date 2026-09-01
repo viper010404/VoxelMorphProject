@@ -1,0 +1,27 @@
+{
+  "name": "2d_baseline_lam0.05_disp_d4",
+  "variant": "baseline",
+  "ndim": 2,
+  "lambda_reg": 0.05,
+  "integration_steps": 0,
+  "nb_features": [
+    16,
+    32,
+    32,
+    32
+  ],
+  "steps": 20000,
+  "batch_size": 16,
+  "lr": 0.0001,
+  "seed": 0,
+  "val_every": 2000,
+  "val_pairs": 64,
+  "attn_heads": 4,
+  "lambda_mask_norm": false,
+  "cross_attn_target_skips": false,
+  "cross_attn_use_attention": true,
+  "cross_attn_window_level": -1,
+  "cross_attn_window_radius": 2,
+  "data_path": "data/oasis2d.npz",
+  "output_root": "results"
+}

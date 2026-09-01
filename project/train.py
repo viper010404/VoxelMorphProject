@@ -25,7 +25,8 @@ import torch
 
 from project.configs import ExperimentConfig
 from project.data import OasisData, PairSampler, default_label_policy, fixed_pairs
-from project.losses import registration_loss
+from project.losses import pyramid_loss, registration_loss
+from project.misalign import apply_displacement, pair_seed, random_displacement
 from project.metrics import dice_per_structure, mean_dice, warp_segmentation
 from project.models import build_model
 
@@ -45,6 +46,7 @@ def validation_dice(
     pairs: List[Tuple[int, int]],
     labels: List[int],
     device: str,
+    misalign_magnitude: float = 0.0,
 ) -> float:
     """
     Mean Dice over a fixed set of validation pairs.
@@ -61,6 +63,10 @@ def validation_dice(
         Structure ids to score.
     device : str
         Device to run on.
+    misalign_magnitude : float, optional
+        Pre-warp the moving image and its labels by this much before registering. Seeded per
+        pair, so the validation task is identical every time it is scored and across models --
+        otherwise model selection would chase the noise in a fresh random deformation.
 
     Returns
     -------
@@ -73,10 +79,16 @@ def validation_dice(
     for fixed_idx, moving_idx in pairs:
         source = data.batch([moving_idx]).to(device)
         target = data.batch([fixed_idx]).to(device)
+        moving_seg = data.seg_batch([moving_idx]).to(device)
+
+        if misalign_magnitude > 0:
+            field = random_displacement(
+                source.shape[2:], source.dim() - 2, misalign_magnitude,
+                seed=pair_seed(fixed_idx, moving_idx, misalign_magnitude), device=device)
+            source, moving_seg = apply_displacement(source, field, moving_seg)
 
         outputs = model(source, target)
 
-        moving_seg = data.seg_batch([moving_idx]).to(device)
         warped_seg = warp_segmentation(moving_seg, outputs['displacement'])
 
         fixed_seg_np = data.seg_batch([fixed_idx]).squeeze().cpu().numpy()
@@ -131,16 +143,33 @@ def train(config: ExperimentConfig) -> Dict:
         source = source.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
 
+        if config.misalign_magnitude > 0:
+            # Draw the magnitude uniformly up to the configured maximum, so the model sees the
+            # whole range rather than one deformation scale, and a fresh field every step.
+            drawn = float(np.random.uniform(0.0, config.misalign_magnitude))
+            field = random_displacement(source.shape[2:], config.ndim, drawn,
+                                        seed=int(np.random.randint(2 ** 31)), device=device)
+            source, _ = apply_displacement(source, field)
+
         optimizer.zero_grad(set_to_none=True)
         outputs = model(source, target)
 
-        losses = registration_loss(
-            target=target,
-            warped_source=outputs['warped_source'],
-            disp=outputs['displacement'],
-            lambda_reg=config.lambda_reg,
-            weight=outputs.get('lambda_map'),
-        )
+        if 'pyramid' in outputs and config.deep_supervision:
+            losses = pyramid_loss(
+                target=target,
+                source=source,
+                fields=outputs['pyramid'],
+                lambda_reg=config.lambda_reg,
+                transformer=model.spatial_transformer,
+            )
+        else:
+            losses = registration_loss(
+                target=target,
+                warped_source=outputs['warped_source'],
+                disp=outputs['displacement'],
+                lambda_reg=config.lambda_reg,
+                weight=outputs.get('lambda_map'),
+            )
         losses['total'].backward()
         optimizer.step()
 
@@ -151,7 +180,8 @@ def train(config: ExperimentConfig) -> Dict:
             history['smoothness'].append(losses['smoothness'].detach().item())
 
         if step % config.val_every == 0 or step == config.steps:
-            dice = validation_dice(model, data, val_pairs, labels, device)
+            dice = validation_dice(model, data, val_pairs, labels, device,
+                                   misalign_magnitude=config.misalign_magnitude)
             history['val_step'].append(step)
             history['val_dice'].append(dice)
 

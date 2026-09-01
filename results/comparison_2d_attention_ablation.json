@@ -1,0 +1,38 @@
+{
+  "baseline": "2d_cross_attn_lam0.1_svf_tskip",
+  "split": "test",
+  "comparisons": {
+    "2d_cross_attn_lam0.1_svf_tskip_noattn": {
+      "dice": {
+        "n": 100,
+        "baseline_mean": 0.745046256034984,
+        "candidate_mean": 0.7466368641078286,
+        "delta_mean": 0.0015906080728447403,
+        "delta_std": 0.009997025468251248,
+        "improved_pairs": 58,
+        "t_p": 0.11477955701948135,
+        "wilcoxon_p": 0.1285764395425518
+      },
+      "folding_fraction": {
+        "n": 100,
+        "baseline_mean": 0.0,
+        "candidate_mean": 0.0,
+        "delta_mean": 0.0,
+        "delta_std": 0.0,
+        "improved_pairs": 0,
+        "t_p": 1.0,
+        "wilcoxon_p": 1.0
+      },
+      "inverse_consistency": {
+        "n": 100,
+        "baseline_mean": 0.01895012945868075,
+        "candidate_mean": 0.0195134989451617,
+        "delta_mean": 0.0005633694864809513,
+        "delta_std": 0.0014571317433849846,
+        "improved_pairs": 41,
+        "t_p": 0.00019773560824540702,
+        "wilcoxon_p": 0.0024803707467484005
+      }
+    }
+  }
+}

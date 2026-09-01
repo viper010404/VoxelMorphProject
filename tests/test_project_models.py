@@ -11,7 +11,8 @@ import pytest
 import torch
 
 from project.configs import ExperimentConfig
-from project.models import VxmBaseline, VxmCrossAttention, VxmLambdaField, build_model
+from project.models import (LocalCrossAttention, VxmBaseline, VxmCrossAttention,
+                            VxmLambdaField, build_model)
 
 
 CASES = [
@@ -274,3 +275,310 @@ def test_config_without_the_new_field_still_loads(tmp_path):
     path.write_text(json.dumps({'name': 'legacy', 'variant': 'lambda_field', 'ndim': 2}))
     config = ExperimentConfig.load(path)
     assert config.lambda_mask_norm is False
+
+
+@pytest.mark.parametrize('ndim, shape', [(2, (64, 64)), (3, (32, 32, 32))])
+def test_target_skip_fusion_is_the_identity_at_initialisation(ndim, shape):
+    """
+    Turning on target skips must not perturb the model before it has learned anything.
+
+    The fusion is zero-initialised on the target half and identity on the source half, so the
+    fused skip is bit-identical to the source skip at step 0. That makes the target pyramid
+    something the network switches on if it helps, rather than a distribution shift dropped on a
+    decoder that has not learned to use it.
+    """
+    model = VxmCrossAttention(ndim=ndim, target_skips=True).eval()
+    source = torch.rand(1, 1, *shape)
+    target = torch.rand(1, 1, *shape)
+
+    with torch.no_grad():
+        _, source_skips = model._encode(source)
+        _, target_skips = model._encode(target)
+        fused = model._fuse_skips(source_skips, target_skips)
+
+    for fused_skip, source_skip in zip(fused, source_skips):
+        assert torch.equal(fused_skip, source_skip)
+
+
+def test_target_skip_fusion_is_actually_connected_to_the_target():
+    """A zero-initialised branch is worthless if the target never reaches it."""
+    model = VxmCrossAttention(ndim=2, target_skips=True).eval()
+    source = torch.rand(1, 1, 64, 64)
+    target = torch.rand(1, 1, 64, 64)
+
+    with torch.no_grad():
+        _, source_skips = model._encode(source)
+        _, target_skips = model._encode(target)
+        width = model.skip_fusion[0].out_channels
+        model.skip_fusion[0].weight[:, width:].fill_(0.1)
+        fused = model._fuse_skips(source_skips, target_skips)
+
+    assert not torch.equal(fused[0], source_skips[0])
+
+
+def test_target_skips_keep_the_decoder_widths_unchanged():
+    """
+    The 1x1 fusion maps 2C -> C, so the decoder is untouched and capacity stays comparable.
+
+    Concatenating the pyramids directly would double every decoder input and inflate the
+    parameter count, which would confound the comparison against the baseline.
+    """
+    plain = VxmCrossAttention(ndim=3)
+    fused = VxmCrossAttention(ndim=3, target_skips=True)
+    extra = sum(p.numel() for p in fused.parameters()) - sum(p.numel() for p in plain.parameters())
+    baseline = sum(p.numel() for p in VxmBaseline(ndim=3).parameters())
+    assert extra == 8848
+    assert extra / baseline < 0.03
+
+
+def test_target_skips_are_off_by_default():
+    assert VxmCrossAttention(ndim=2).target_skips is False
+    assert ExperimentConfig(name='x', variant='cross_attn').cross_attn_target_skips is False
+
+
+def test_build_model_passes_the_target_skip_flag():
+    config = ExperimentConfig(name='x', variant='cross_attn', ndim=2,
+                              cross_attn_target_skips=True)
+    assert build_model(config).target_skips is True
+
+
+@pytest.mark.parametrize('ndim, shape', [(2, (8, 8)), (3, (6, 6, 6))])
+def test_local_attention_starts_as_a_no_op(ndim, shape):
+    """Zero-initialised output projection, so enabling it cannot perturb a fresh network."""
+    module = LocalCrossAttention(channels=8, ndim=ndim, radius=1, heads=2).eval()
+    with torch.no_grad():
+        out = module(torch.rand(1, 8, *shape), torch.rand(1, 8, *shape))
+    assert torch.all(out == 0)
+
+
+@pytest.mark.parametrize('ndim, shape', [(2, (8, 8)), (3, (6, 6, 6))])
+def test_local_attention_only_sees_its_neighbourhood(ndim, shape):
+    """
+    The locality is the whole point -- it is what makes fine-resolution attention affordable.
+
+    Perturbing the target at one corner must change the output there and nowhere far away. If
+    this leaks, the module is doing global attention at a resolution whose cost we did not pay
+    for, and the complexity argument for windowing collapses.
+    """
+    module = LocalCrossAttention(channels=8, ndim=ndim, radius=1, heads=2).eval()
+    torch.nn.init.normal_(module.project.weight, std=0.5)
+
+    source = torch.rand(1, 8, *shape)
+    target = torch.rand(1, 8, *shape)
+    corner = tuple(size - 1 for size in shape)
+    origin = (0,) * ndim
+
+    perturbed = target.clone()
+    perturbed[(0, slice(None)) + corner] += 10.0
+
+    with torch.no_grad():
+        before = module(source, target)
+        after = module(source, perturbed)
+
+    delta = (after - before).abs()
+    assert float(delta[(0, slice(None)) + corner].max()) > 1e-3
+    assert float(delta[(0, slice(None)) + origin].max()) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_local_attention_rejects_indivisible_head_count():
+    with pytest.raises(ValueError, match='divisible'):
+        LocalCrossAttention(channels=10, ndim=2, radius=1, heads=4)
+
+
+@pytest.mark.parametrize('ndim, shape', [(2, (160, 192)), (3, (32, 32, 32))])
+def test_windowed_model_matches_its_control_at_initialisation(ndim, shape):
+    """Turning windowing on must leave an untrained network numerically unchanged."""
+    control = VxmCrossAttention(ndim=ndim, target_skips=True, use_attention=False).eval()
+    windowed = VxmCrossAttention(ndim=ndim, target_skips=True, use_attention=False,
+                                 window_level=3, window_radius=2).eval()
+    windowed.load_state_dict(control.state_dict(), strict=False)
+
+    source = torch.rand(1, 1, *shape)
+    target = torch.rand(1, 1, *shape)
+    with torch.no_grad():
+        assert torch.equal(control(source, target)['displacement'],
+                           windowed(source, target)['displacement'])
+
+
+def test_windowing_is_disabled_by_default():
+    assert VxmCrossAttention(ndim=2).window_level == -1
+    assert ExperimentConfig(name='x', variant='cross_attn').cross_attn_window_level == -1
+
+
+def test_build_model_passes_the_window_settings():
+    config = ExperimentConfig(name='x', variant='cross_attn', ndim=2,
+                              cross_attn_window_level=3, cross_attn_window_radius=2)
+    model = build_model(config)
+    assert model.window_level == 3
+    assert model.local_attention.radius == 2
+
+
+@pytest.mark.parametrize('ndim, shape', [(2, (160, 192)), (3, (32, 32, 32))])
+def test_pyramid_emits_one_field_per_decoder_level(ndim, shape):
+    from project.models import VxmPyramid
+    model = VxmPyramid(ndim=ndim).eval()
+    with torch.no_grad():
+        out = model(torch.rand(1, 1, *shape), torch.rand(1, 1, *shape))
+    assert len(out['pyramid']) == len(model.unet.upsampling_conv_blocks)
+    # coarsest first, each level twice the previous, finest matching the input
+    sizes = [tuple(f.shape[2:]) for f in out['pyramid']]
+    assert sizes[-1] == tuple(shape)
+    for coarse, fine in zip(sizes, sizes[1:]):
+        assert all(f == 2 * c for c, f in zip(coarse, fine))
+    assert out['displacement'].shape == out['pyramid'][-1].shape
+
+
+@pytest.mark.parametrize('ndim', [2, 3])
+def test_upsampling_a_field_rescales_its_magnitudes(ndim):
+    """
+    A displacement is measured in voxels, so doubling the grid doubles every displacement.
+
+    Skipping the rescale is silent: the field still has the right shape and the model still
+    trains, it just quietly discards half of every coarse level's contribution.
+    """
+    from project.models import VxmPyramid
+    model = VxmPyramid(ndim=ndim)
+    coarse = torch.ones(1, ndim, *([8] * ndim))
+    fine = model._upsample_field(coarse, [16] * ndim)
+    assert fine.shape[2:] == torch.Size([16] * ndim)
+    assert float(fine.mean()) == pytest.approx(2.0, abs=1e-4)
+
+
+def test_progressive_warping_changes_the_computation():
+    """With identical weights, warping the skips must not be a no-op."""
+    from project.models import VxmPyramid
+    warped = VxmPyramid(ndim=2, progressive=True).eval()
+    plain = VxmPyramid(ndim=2, progressive=False).eval()
+    plain.load_state_dict(warped.state_dict())
+    source, target = torch.rand(1, 1, 160, 192), torch.rand(1, 1, 160, 192)
+    with torch.no_grad():
+        assert not torch.equal(warped(source, target)['displacement'],
+                               plain(source, target)['displacement'])
+
+
+def test_deep_supervision_trains_every_level():
+    """
+    Every flow head must receive gradient, including the coarsest.
+
+    This is the whole point of the objective: with a single loss at full resolution the coarse
+    levels can free-ride, which is how the baseline's bottleneck ended up worth only 0.007 Dice.
+    """
+    from project.losses import pyramid_loss
+    from project.models import VxmPyramid
+    model = VxmPyramid(ndim=2)
+    source, target = torch.rand(2, 1, 160, 192), torch.rand(2, 1, 160, 192)
+    out = model(source, target)
+    pyramid_loss(target, source, out['pyramid'], lambda_reg=0.1,
+                 transformer=model.spatial_transformer)['total'].backward()
+    for index, head in enumerate(model.flow_heads):
+        assert head.weight.grad is not None, f'level {index} got no gradient'
+        assert float(head.weight.grad.abs().sum()) > 0, f'level {index} gradient is zero'
+
+
+def test_pyramid_loss_weights_the_finest_level_most():
+    """
+    Coarse terms guide the objective; they must not take it over.
+
+    Asserted against the per-level values the loss reports, rather than by perturbing a field:
+    a fixed displacement is proportionally much larger on a coarse grid, so a naive perturbation
+    test measures the grid size rather than the weighting.
+    """
+    from project.losses import pyramid_loss
+    torch.manual_seed(0)
+    target = torch.rand(1, 1, 32, 32)
+    source = torch.rand(1, 1, 32, 32)
+    fields = [torch.zeros(1, 2, 32 // 2 ** k, 32 // 2 ** k) for k in (2, 1, 0)]
+
+    result = pyramid_loss(target, source, fields, lambda_reg=0.0)
+    levels = result['similarity_levels']
+    expected = sum(v / 2 ** (len(levels) - 1 - i) for i, v in enumerate(levels))
+
+    assert float(result['total']) == pytest.approx(float(expected), rel=1e-6)
+    assert float(result['similarity']) == pytest.approx(float(levels[-1]), rel=1e-6)
+    # weights must be strictly increasing towards the finest level
+    weights = [1 / 2 ** (len(levels) - 1 - i) for i in range(len(levels))]
+    assert weights == sorted(weights)
+    assert weights[-1] == 1.0
+
+
+def test_build_model_creates_the_pyramid_variant():
+    config = ExperimentConfig(name='x', variant='pyramid', ndim=2, pyramid_progressive=False)
+    model = build_model(config)
+    assert model.progressive is False
+    assert len(model.flow_heads) == 5
+
+
+def test_cascade_composes_transforms_rather_than_adding_them():
+    """
+    `u = u2 + warp(u1, u2)` must beat naive addition against a true two-stage warp.
+
+    With the convention `moved(x) = src(x + u(x))`, applying stage 1 then stage 2 gives
+    `u(x) = u2(x) + u1(x + u2(x))`. Adding the fields is wrong whenever the first stage moves
+    anything, because the second stage's correction lives in the frame the first stage created.
+    Tested on a smooth image: white noise cannot distinguish these, since double interpolation
+    smooths it and single interpolation does not, swamping the effect being measured.
+    """
+    import voxelmorph as vxm
+    from project.misalign import random_displacement
+
+    transformer = vxm.nn.modules.SpatialTransformer()
+    grid_y, grid_x = torch.meshgrid(torch.linspace(0, 1, 64), torch.linspace(0, 1, 64),
+                                    indexing='ij')
+    smooth = (torch.sin(6 * grid_x) * torch.cos(5 * grid_y)).unsqueeze(0).unsqueeze(0)
+
+    first = random_displacement((64, 64), 2, 3.0, seed=1)
+    second = random_displacement((64, 64), 2, 2.0, seed=2)
+
+    two_stage = transformer(transformer(smooth, first), second)
+    composed = second + transformer(first, second)
+    added = first + second
+
+    composed_error = float((transformer(smooth, composed) - two_stage).abs().mean())
+    added_error = float((transformer(smooth, added) - two_stage).abs().mean())
+    assert composed_error < added_error / 3
+
+
+@pytest.mark.parametrize('scales, expected', [((2, 1), 194800), ((1, 1), 222512)])
+def test_cascade_parameter_counts(scales, expected):
+    """
+    A stage at scale `s` drops log2(s) UNet levels, which is what makes (2,1) cheaper than (1,1).
+
+    Pinned because the parameter count is the whole basis of the capacity control: the claim is
+    that the cascade beats a baseline widened *past* its own size, so its size must be known.
+    """
+    config = ExperimentConfig(name='x', variant='cascade', ndim=2, cascade_scales=scales)
+    assert sum(p.numel() for p in build_model(config).parameters()) == expected
+
+
+def test_cascade_rejects_non_power_of_two_scales():
+    from project.models import VxmCascade
+    with pytest.raises(ValueError, match='powers of two'):
+        VxmCascade(ndim=2, stage_scales=(3, 1))
+
+
+def test_cascade_warped_source_matches_its_composed_field():
+    from project.models import VxmCascade
+    model = VxmCascade(ndim=2).eval()
+    source, target = torch.rand(1, 1, 160, 192), torch.rand(1, 1, 160, 192)
+    with torch.no_grad():
+        out = model(source, target)
+        assert torch.allclose(model.spatial_transformer(source, out['displacement']),
+                              out['warped_source'], atol=1e-6)
+    assert len(out['stages']) == 2
+
+
+def test_widened_baseline_gets_its_own_run_name():
+    """
+    A capacity control must not reuse the plain baseline's directory.
+
+    Depth alone does not identify an architecture: a widened UNet of the same depth would collide
+    with the baseline and overwrite the very result it exists to be compared against.
+    """
+    from project.configs import build_matrix
+    plain = build_matrix(ndim=2, lambdas=(0.25,), integration_steps=(0,),
+                         variants=('baseline',))[0]
+    wide = build_matrix(ndim=2, lambdas=(0.25,), integration_steps=(0,), variants=('baseline',),
+                        nb_features=(24, 44, 44, 44, 44))[0]
+    assert plain.name == '2d_baseline_lam0.25_disp'
+    assert wide.name != plain.name
+    assert wide.nb_features == (24, 44, 44, 44, 44)

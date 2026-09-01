@@ -33,6 +33,7 @@ from project.metrics import (
     mean_dice,
     warp_segmentation,
 )
+from project.misalign import apply_displacement, pair_seed, random_displacement
 from project.models import build_model
 
 
@@ -42,6 +43,7 @@ def evaluate_run(
     split: str = 'test',
     n_pairs: int = 100,
     checkpoint: str = 'best.pt',
+    misalign_magnitude: float = 0.0,
 ) -> Dict:
     """
     Evaluate one trained run on the shared fixed pair list.
@@ -56,11 +58,17 @@ def evaluate_run(
         Number of evaluation pairs; must match across runs for a paired comparison.
     checkpoint : str, optional
         Checkpoint filename to load.
+    misalign_magnitude : float, optional
+        Pre-warp the moving image and its labels by a seeded smooth deformation of this mean
+        magnitude before registering, creating the large-displacement regime the shipped dataset
+        lacks. The seed is derived from the pair and the magnitude, so every model faces the
+        identical perturbation and the comparison stays paired.
 
     Returns
     -------
     dict
-        Results payload, also written to `<run_dir>/eval_<split>.json`.
+        Results payload, also written to `<run_dir>/eval_<split>.json`, or
+        `eval_<split>_mis<n>.json` when a misalignment magnitude is given.
     """
     run_dir = Path(run_dir)
     config = ExperimentConfig.load(run_dir / 'config.json')
@@ -81,6 +89,13 @@ def evaluate_run(
     for fixed_idx, moving_idx in pairs:
         source = data.batch([moving_idx]).to(device)
         target = data.batch([fixed_idx]).to(device)
+        moving_seg = data.seg_batch([moving_idx]).to(device)
+
+        if misalign_magnitude > 0:
+            field = random_displacement(
+                source.shape[2:], config.ndim, misalign_magnitude,
+                seed=pair_seed(fixed_idx, moving_idx, misalign_magnitude), device=device)
+            source, moving_seg = apply_displacement(source, field, moving_seg)
 
         started = time.time()
         outputs = model(source, target)
@@ -90,7 +105,6 @@ def evaluate_run(
 
         displacement = outputs['displacement']
 
-        moving_seg = data.seg_batch([moving_idx]).to(device)
         warped_seg = warp_segmentation(moving_seg, displacement)
 
         fixed_seg_np = data.seg_batch([fixed_idx]).squeeze().cpu().numpy()
@@ -134,13 +148,17 @@ def evaluate_run(
         'run': run_dir.name,
         'config': json.loads((run_dir / 'config.json').read_text()),
         'split': split,
+        'misalign_magnitude': misalign_magnitude,
         'n_pairs': len(pairs),
         'labels': labels,
         'summary': _summarise(rows),
         'per_pair': rows,
     }
 
-    out_path = run_dir / f'eval_{split}.json'
+    # Keep each misalignment level in its own file: scoring one run at several magnitudes must
+    # not overwrite the unperturbed result the rest of the project compares against.
+    suffix = f'_mis{misalign_magnitude:g}' if misalign_magnitude > 0 else ''
+    out_path = run_dir / f'eval_{split}{suffix}.json'
     with open(out_path, 'w') as f:
         json.dump(payload, f, indent=2)
 
@@ -172,13 +190,16 @@ def main() -> None:
     parser.add_argument('--run', type=Path, required=True, nargs='+',
                         help='one or more run directories')
     parser.add_argument('--split', type=str, default='test')
+    parser.add_argument('--misalign', type=float, default=0.0,
+                        help='mean voxels of synthetic misalignment applied to the moving image '
+                             'before registering; seeded per pair so models are comparable')
     parser.add_argument('--n-pairs', type=int, default=100)
     parser.add_argument('--checkpoint', type=str, default='best.pt')
     args = parser.parse_args()
 
     for run_dir in args.run:
         evaluate_run(run_dir, split=args.split, n_pairs=args.n_pairs,
-                     checkpoint=args.checkpoint)
+                     checkpoint=args.checkpoint, misalign_magnitude=args.misalign)
 
 
 if __name__ == '__main__':

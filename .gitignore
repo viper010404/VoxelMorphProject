@@ -61,3 +61,6 @@ output/
 # Local virtualenv
 .venv/
 overnight.log
+
+# orchestrator logs (regenerable; the eval JSONs under results/ are the record)
+*.log

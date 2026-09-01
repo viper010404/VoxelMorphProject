@@ -13,9 +13,11 @@ attributable to the weighting, not to two subtly different implementations of a 
 `tests/test_project_losses.py` asserts this function matches `SpatialGradient` when unweighted.
 """
 
-from typing import Literal, Optional
+from typing import Literal, Optional, Sequence
 
 import torch
+
+import voxelmorph as vxm
 
 
 def spatial_smoothness(
@@ -139,4 +141,83 @@ def registration_loss(
         'total': similarity + lambda_reg * smoothness,
         'similarity': similarity,
         'smoothness': smoothness,
+    }
+
+
+def pyramid_loss(
+    target: torch.Tensor,
+    source: torch.Tensor,
+    fields: Sequence[torch.Tensor],
+    lambda_reg: float,
+    transformer=None,
+) -> dict:
+    """
+    Deeply-supervised objective: score every level of a displacement pyramid, not just the last.
+
+    A single loss at full resolution lets the network route everything through whichever path is
+    shortest, which is how the coarse decoder levels ended up contributing almost nothing --
+    deleting the bottleneck of a trained baseline costs only 0.007 Dice. Attaching a similarity
+    term to each level removes that option: a level cannot free-ride, because it is scored on how
+    well its own field aligns the images at its own resolution.
+
+    Both images are downsampled to each level's grid before scoring, and the field is used as-is
+    -- its magnitudes are already in that level's voxels, which is why `VxmPyramid` rescales when
+    it upsamples.
+
+    Coarse levels are weighted `1 / 2 ** (levels - 1 - i)`, so the finest level dominates and the
+    coarse terms act as a guide rather than taking over the objective. The smoothness penalty is
+    applied once, to the final field, because the coarse fields are components of it rather than
+    independent deformations, and penalising each would regularise the same displacement several
+    times over.
+
+    Parameters
+    ----------
+    target : torch.Tensor
+        Fixed image at full resolution, shape (B, C, *spatial).
+    source : torch.Tensor
+        Moving image at full resolution, same shape.
+    fields : sequence of torch.Tensor
+        Displacement fields, coarsest first; the last is the model's output.
+    lambda_reg : float
+        Regularisation trade-off parameter.
+    transformer : callable or None, optional
+        Warping operator; defaults to a `voxelmorph` spatial transformer.
+
+    Returns
+    -------
+    dict
+        Keys `total`, `similarity`, `smoothness`, plus `similarity_levels` giving the per-level
+        similarity values so training curves can show whether the coarse levels are learning.
+    """
+    if transformer is None:
+        transformer = vxm.nn.modules.SpatialTransformer()
+
+    levels = len(fields)
+    ndim = target.dim() - 2
+    mode = 'bilinear' if ndim == 2 else 'trilinear'
+
+    similarity = target.new_zeros(())
+    per_level = []
+
+    for index, field in enumerate(fields):
+        shape = tuple(field.shape[2:])
+        if shape == tuple(target.shape[2:]):
+            level_target, level_source = target, source
+        else:
+            level_target = torch.nn.functional.interpolate(
+                target, size=shape, mode=mode, align_corners=True)
+            level_source = torch.nn.functional.interpolate(
+                source, size=shape, mode=mode, align_corners=True)
+
+        value = image_similarity(level_target, transformer(level_source, field))
+        per_level.append(value)
+        similarity = similarity + value / (2 ** (levels - 1 - index))
+
+    smoothness = spatial_smoothness(fields[-1])
+
+    return {
+        'total': similarity + lambda_reg * smoothness,
+        'similarity': per_level[-1],
+        'smoothness': smoothness,
+        'similarity_levels': per_level,
     }
